@@ -1,0 +1,37 @@
+# This is a shell archive.  Save it in a file, remove anything before
+# this line, and then unpack it by entering "sh file".  Note, it may
+# create directories; files and directories will be owned by you and
+# have default permissions.
+#
+# This archive contains:
+#
+#	ethread_rfc_lig.py
+#
+echo x - ethread_rfc_lig.py
+sed 's/^X//' >ethread_rfc_lig.py << 'END-of-ethread_rfc_lig.py'
+X#!/usr/bin/env /var/scratch/michal/apps/anaconda3/bin/python
+X
+Ximport os
+Ximport sys
+Ximport pandas as pd
+Ximport pickle
+Xfrom sklearn import cross_validation
+Xfrom sklearn.metrics import roc_curve, auc
+Xfrom sklearn.ensemble import RandomForestClassifier
+Xfrom sklearn.externals import joblib
+X
+Xdef load(ifn):
+X    return pd.read_csv(ifn, header=None, sep=" ")
+X
+Xdset = load(sys.argv[1])
+X
+XX = dset[[0, 1, 2, 3, 4, 5]].values
+X
+Xclf = joblib.load(os.environ['ET_LIBRFC']+'/ethread_rfc_lig.pkl')
+X
+Xpredictions = clf.predict_proba(X)
+Xfor val in predictions:
+X    print (val)
+END-of-ethread_rfc_lig.py
+exit
+

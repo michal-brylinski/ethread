@@ -1,0 +1,412 @@
+# This is a shell archive.  Save it in a file, remove anything before
+# this line, and then unpack it by entering "sh file".  Note, it may
+# create directories; files and directories will be owned by you and
+# have default permissions.
+#
+# This archive contains:
+#
+#	ethread_rank
+#
+echo x - ethread_rank
+sed 's/^X//' >ethread_rank << 'END-of-ethread_rank'
+X#!/home/michal/local/bin/perl -w
+X
+X#===============================================================================
+X#           _______ __                        __ 
+X#   .-----.|_     _|  |--.----.-----.---.-.--|  |
+X#   |  -__|  |   | |     |   _|  -__|  _  |  _  |
+X#   |_____|  |___| |__|__|__| |_____|___._|_____|
+X#                                                  
+X#   eThread - protein structure modeling by meta-threading
+X#
+X#   This software is distributed WITHOUT ANY WARRANTY (but with best wishes)
+X#
+X#   Report bugs and issues to michal@brylinski.org
+X#
+X#   Computational Systems Biology Group
+X#   Department of Biological Sciences
+X#   Center for Computation & Technology
+X#   Louisiana State University
+X#   407 Choppin Hall, Baton Rouge, LA 70803, USA
+X#
+X#   http://www.brylinski.org
+X#
+X#===============================================================================
+X
+X use strict;
+X use File::Slurp;
+X use File::Path;
+X use File::Temp qw/ tempfile tempdir /;
+X use Cwd;
+X use Benchmark;
+X 
+X local $| = 1;
+X 
+X print "------------------------------------------------------------\n";
+X print "                       ethread_rank\n";
+X print "                        version 2.0\n";
+X print "                       model ranking\n\n";
+X print "       report bugs and issues to michal\@brylinski.org\n";
+X print "------------------------------------------------------------\n\n";
+X 
+X die "ET_BETACON is not set\n" if !( $ENV{'ET_BETACON'} );
+X die "ET_MODEVAL is not set\n" if !( $ENV{'ET_MODEVAL'} );
+X die "ET_TMSCORE is not set\n" if !( $ENV{'ET_TMSCORE'} );
+X 
+X my $betacon = $ENV{'ET_BETACON'};
+X my $modeval = $ENV{'ET_MODEVAL'};
+X my $tmscore = $ENV{'ET_TMSCORE'};
+X 
+X die "Could not find betacon directory\n" if ( !( -e $betacon ) or !( -d $betacon ) );
+X die "Could not find mod_eval directory\n" if ( !( -e $modeval ) or !( -d $modeval ) );
+X 
+X die "Could not find beta_contact_map.sh in $betacon/bin/\n" if ( !( -e "$betacon/bin/beta_contact_map.sh" ) );
+X die "Could not find model_eval.sh in $modeval/bin/\n" if ( !( -e "$modeval/bin/model_eval.sh" ) );
+X 
+X if ($#ARGV < 2)
+X {
+X  print "ethread_rank -s <target sequence in FASTA format>\n";
+X  print "             -p <eThread models in PDB format>\n";
+X  print "             -o <output name>\n";
+X  print "             -n <number of models, default 5>\n";
+X  print "             -f <TM-score redundancy filter, default 1.0 (none)>\n";
+X  die "\n";
+X }
+X 
+X my $ftar1 = '';
+X my $fpdb1 = '';
+X my $fout1 = '';
+X my $fnum1 = 5;
+X my $ftms1 = 1.0;
+X 
+X for ( my $i = 0; $i <= $#ARGV; $i++ )
+X {
+X  $ftar1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-s' );
+X  $fpdb1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-p' );
+X  $fout1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-o' );
+X  $fnum1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-n' );
+X  $ftms1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-f' );
+X }
+X 
+X die "Provide target sequence\n" if ( !( -e $ftar1 ) or !length($ftar1) );
+X die "Provide output name\n" if ( !length($fout1) );
+X die "Provide eThread models\n" if ( !( -e $fpdb1 ) or !length($fpdb1) );
+X die "Max number of models must be larger than 0\n" if ( $fnum1 < 1 );
+X die "TM-score redundancy filter must be in the range of 0-1\n" if ( $ftms1 < 0.0 or $ftms1 > 1.0 );
+X 
+X my $bt0 = Benchmark->new;
+X 
+X my $dir1 = getcwd();
+X 
+X my $dir2 = tempdir( CLEANUP => 1 );
+X 
+X printf("Tempdir created: %s\n\n", $dir2);
+X 
+X my ($fh1, $tmpfil1) = tempfile( DIR => $dir2, UNLINK => 1);
+X my ($fh2, $tmpfil2) = tempfile( DIR => $dir2, UNLINK => 1);
+X my ($fh3, $tmpfil3) = tempfile( DIR => $dir2, UNLINK => 1);
+X 
+X my @tt01 = split(/\//, $tmpfil1);
+X my @tt02 = split(/\//, $tmpfil2);
+X my @tt03 = split(/\//, $tmpfil3);
+X 
+X my $tmpfil1b = pop(@tt01);
+X my $tmpfil2b = pop(@tt02);
+X 
+X 
+X # target sequence -------------------------------
+X 
+X my $seq1 = '';
+X 
+X my @seq2 = read_file($ftar1); chomp(@seq2);
+X 
+X my $seq3 = '';
+X 
+X foreach my $wseq2 (@seq2)
+X {
+X  $seq1 .= $wseq2 if ( length($wseq2) and !( $wseq2 =~/\>/ ) );
+X  
+X  if ( $wseq2 =~/\>/ )
+X  {
+X   my @tt8 = split(/\ /, $wseq2);
+X   
+X   $seq3 = shift(@tt8);
+X   
+X   $seq3 =~ s/\>//g;
+X  }
+X }
+X 
+X 
+X # ethread models --------------------------------
+X 
+X print "Parsing models ... ";
+X 
+X my @pdb1 = read_file($fpdb1); chomp(@pdb1);
+X 
+X my %pdb2 = ();
+X 
+X my @pdb3 = ();
+X 
+X my $n1 = 0;
+X 
+X foreach my $wpdb1 (@pdb1)
+X {
+X  push(@pdb3, $wpdb1);
+X  
+X  if ( $wpdb1 eq 'ENDMDL' )
+X  {
+X   my @tt1 = grep(/REMARK TEMPLATE/, @pdb3);
+X   
+X   if ( @tt1 )
+X   {
+X    my @tt2 = grep(/ATOM  /, @pdb3);
+X    
+X    my $tt3 = '';
+X    
+X    foreach my $wtt2 (@tt2)
+X    {
+X     $tt3 .= $wtt2.':';
+X    }
+X    
+X    substr($tt3, -1, 1) = '' if ( substr($tt3, -1, 1) eq ':' );
+X    
+X    my @tt4 = split(/\ /, $tt1[0]);
+X    
+X    my $tt5 = sprintf("REMARK TEMPLATE %s %.3f:%s", $tt4[2], $tt4[3], $tt1[0]);
+X    
+X    $pdb2{$tt5} = $tt3;
+X    
+X    printf("%d ", ++$n1);
+X   }
+X   
+X   @pdb3 = ();
+X  }
+X }
+X 
+X print "done\n\n";
+X 
+X 
+X # betacon ---------------------------------------
+X 
+X chdir($dir2);
+X 
+X print "Running betacon ... ";
+X 
+X my @tmp1 = ();
+X 
+X push(@tmp1, ">T0288\n");
+X push(@tmp1, "$seq1\n");
+X 
+X write_file('T0288.fasta', @tmp1);
+X 
+X mkdir("$dir2/output");
+X 
+X open (BET, "$betacon/bin/beta_contact_map.sh T0288.fasta ./output 2>&1 |") || die "Cannot execute $betacon/bin/beta_contact_map.sh T0288.fasta ./output 2>&1\n";
+X  my @bet1=<BET>;
+X  chomp(@bet1);
+X close (BET);
+X 
+X print "done\n\n";
+X 
+X 
+X # mod_eval --------------------------------------
+X 
+X print "Running ModelEvaluator ... ";
+X 
+X my %gdt1 = ();
+X 
+X my $n2 = 0;
+X 
+X foreach my $wpdb2 ( keys %pdb2 )
+X {
+X  printf("%d ", ++$n2);
+X  
+X  my @pdb4 = split(/\:/, $pdb2{$wpdb2});
+X  
+X  my @pdb5 = ();
+X  
+X  foreach my $wpdb4 (@pdb4)
+X  {
+X   substr($wpdb4, 21, 1) = ' ';
+X   
+X   push(@pdb5, substr($wpdb4, 0, 54)."  1.00  1.00\n");
+X  }
+X  
+X  push(@pdb5, "TER\n");
+X  push(@pdb5, "END\n");
+X  
+X  write_file('T0288.pdb', @pdb5);
+X  
+X  open (MOD, "$modeval/bin/model_eval.sh T0288.fasta ./output T0288.pdb 2>&1 |") || die "Cannot execute $modeval/bin/model_eval.sh T0288.fasta ./output T0288.pdb 2>&1\n";
+X   my @mod1=<MOD>;
+X   chomp(@mod1);
+X  close (MOD);
+X  
+X  my @mod2 = grep(/GDT_TS/, @mod1);
+X  
+X  if ( @mod2 )
+X  {
+X   my @mod3 = split(/\:/, $mod2[0]);
+X   
+X   my $mod4 = pop(@mod3);
+X   
+X   $gdt1{$wpdb2} = $mod4 * 1.0;
+X  }
+X  
+X  unlink('T0288.pdb') if ( -e 'T0288.pdb' );
+X }
+X 
+X unlink('T0288.fasta') if ( -e 'T0288.fasta' );
+X 
+X rmtree('output') if ( -d 'output' );
+X 
+X chdir($dir1);
+X 
+X print "done\n\n";
+X 
+X 
+X # redundancy ------------------------------------
+X 
+X if ( $ftms1 < 0.9999 )
+X {
+X  print "Removing redundancy ... ";
+X  
+X  my %gdt2 = ();
+X  
+X  my $n4 = 0;
+X  
+X  foreach my $wgdt1 ( sort { $gdt1{$b} <=> $gdt1{$a} } keys %gdt1 )
+X  {
+X   my @pdb7 = split(/\:/, $pdb2{$wgdt1});
+X   
+X   foreach my $wpdb7 (@pdb7)
+X   {
+X    $wpdb7 .= "\n";
+X   }
+X   
+X   push(@pdb7, "TER\n");
+X   push(@pdb7, "END\n");
+X   
+X   write_file($tmpfil1b, @pdb7);
+X   
+X   my $w1 = 1;
+X   
+X   foreach my $wgdt2 ( keys %gdt2 )
+X   {
+X    my @pdb8 = split(/\:/, $pdb2{$wgdt2});
+X    
+X    foreach my $wpdb8 (@pdb8)
+X    {
+X     $wpdb8 .= "\n";
+X    }
+X    
+X    push(@pdb8, "TER\n");
+X    push(@pdb8, "END\n");
+X    
+X    write_file($tmpfil2b, @pdb8);
+X    
+X    open (TMS, "$tmscore $tmpfil1b $tmpfil2b 2>&1 |") || die "Cannot execute $tmscore $tmpfil1b $tmpfil2b 2>&1\n";
+X     my @tms1=<TMS>;
+X     chomp(@tms1);
+X    close (TMS);
+X    
+X    my @tms2 = grep(/TM-score    =/, @tms1);
+X    
+X    my $tms3 = 1.0;
+X    
+X    if ( @tms2 )
+X    {
+X     $tms3 = substr($tms2[0], 13, 7) * 1.0;
+X    }
+X    else
+X    {
+X     die "Problem with $fpdb1\n";
+X    }
+X    
+X    unlink($tmpfil2b) if ( -e $tmpfil2b );
+X    
+X    $w1 = 0 if ( $tms3 > $ftms1 );
+X    
+X    last if ( !$w1 );
+X   }
+X   
+X   if ( $w1 )
+X   {
+X    $gdt2{$wgdt1} = $gdt1{$wgdt1};
+X    
+X    printf("%d ", ++$n4);
+X   }
+X   
+X   unlink($tmpfil1b) if ( -e $tmpfil1b );
+X  }
+X  
+X  print "done\n\n";
+X  
+X  $n2 = $n4;
+X  
+X  %gdt1 = %gdt2;
+X }
+X 
+X 
+X # writing models --------------------------------
+X 
+X if ( $n2 )
+X {
+X  my @out1 = ();
+X  
+X  $n2 = $fnum1 if ( $n2 > $fnum1 );
+X  
+X  if ( $n2 > 1 )
+X  {
+X   print "Writing $n2 models to $fout1 ... ";
+X  }
+X  else
+X  {
+X   print "Writing $n2 model to $fout1 ... ";
+X  }
+X  
+X  my $n3 = 0;
+X  
+X  foreach my $wgdt1 ( sort { $gdt1{$b} <=> $gdt1{$a} } keys %gdt1 )
+X  {
+X   $n3++;
+X   
+X   my @pdb6 = split(/\:/, $pdb2{$wgdt1});
+X   
+X   push(@out1, "MODEL $n3\n");
+X   
+X   my @gdt3 = split(/\:/, $wgdt1);
+X   
+X   push(@out1, "$gdt3[0]\n");
+X   
+X   push(@out1, sprintf("REMARK ESTIMATED GDT_TS %.4f\n", $gdt1{$wgdt1}));
+X   
+X   foreach my $wpdb6 (@pdb6)
+X   {
+X    push(@out1, "$wpdb6\n");
+X   }
+X   
+X   push(@out1, "ENDMDL\n");
+X   
+X   last if ( $n3 >= $fnum1 );
+X  }
+X  
+X  write_file($fout1, @out1);
+X  
+X  print "done\n\n";
+X }
+X else
+X {
+X  print "No models have been ranked\n\n";
+X }
+X 
+X my $bt1 = Benchmark->new;
+X 
+X printf("------------------------------------------------------------\n");
+X printf("Walltime: %s\n", timestr(timediff($bt1, $bt0)));
+X printf("------------------------------------------------------------\n");
+X 
+X exit(0);
+END-of-ethread_rank
+exit
+

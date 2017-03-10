@@ -1,0 +1,2184 @@
+# This is a shell archive.  Save it in a file, remove anything before
+# this line, and then unpack it by entering "sh file".  Note, it may
+# create directories; files and directories will be owned by you and
+# have default permissions.
+#
+# This archive contains:
+#
+#	ethread
+#
+echo x - ethread
+sed 's/^X//' >ethread << 'END-of-ethread'
+X#!/home/michal/local/bin/perl -w
+X
+X#===============================================================================
+X#           _______ __                        __ 
+X#   .-----.|_     _|  |--.----.-----.---.-.--|  |
+X#   |  -__|  |   | |     |   _|  -__|  _  |  _  |
+X#   |_____|  |___| |__|__|__| |_____|___._|_____|
+X#                                                  
+X#   eThread - protein structure modeling by meta-threading
+X#
+X#   This software is distributed WITHOUT ANY WARRANTY (but with best wishes)
+X#
+X#   Report bugs and issues to michal@brylinski.org
+X#
+X#   Computational Systems Biology Group
+X#   Department of Biological Sciences
+X#   Center for Computation & Technology
+X#   Louisiana State University
+X#   407 Choppin Hall, Baton Rouge, LA 70803, USA
+X#
+X#   http://www.brylinski.org
+X#
+X#===============================================================================
+X
+X use strict;
+X use File::Slurp;
+X use File::Copy;
+X use Algorithm::NeedlemanWunsch;
+X use File::Temp qw/ tempfile tempdir /;
+X use Uniq;
+X use Cwd;
+X use Benchmark;
+X 
+X local $| = 1;
+X 
+X my %nwmat1 = ();
+X 
+X my @nwmat3 = qw(A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V  B  Z  X);
+X 
+X while ( my $wdat1 = <DATA> )
+X {
+X  chomp $wdat1;
+X  
+X  if ( length($wdat1) == 70 and $wdat1 ne '   A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V  B  Z  X' )
+X  {
+X   my $nwr1 = substr($wdat1, 0, 1);
+X   
+X   for ( my $xg = 0; $xg < 23; $xg++ )
+X   {
+X    $nwmat1{$nwr1.$nwmat3[$xg]} = substr($wdat1, 1 + $xg * 3, 3) * 1;
+X   }
+X  }
+X }
+X
+X my @nwseq1 = ();
+X my @nwseq2 = ();
+X 
+X my $nwseq1o = '';
+X my $nwseq2o = '';
+X 
+X 
+X sub blosum {
+X 
+X  my ($anw, $bnw) = @_;
+X  
+X  my $snw = 0;
+X  
+X  $snw = $nwmat1{$anw.$bnw} if ( exists $nwmat1{$anw.$bnw} );
+X  
+X  return ($snw);
+X }
+X 
+X 
+X my $matcher = Algorithm::NeedlemanWunsch->new(\&blosum);
+X 
+X    $matcher->gap_open_penalty(-10);
+X    $matcher->gap_extend_penalty(-2);
+X 
+X 
+X sub prepend_align {
+X 
+X  my ($i, $j) = @_;
+X  
+X  $nwseq1o = $nwseq1[$i] . $nwseq1o;
+X  $nwseq2o = $nwseq2[$j] . $nwseq2o;
+X }
+X 
+X 
+X sub prepend_first_only {
+X 
+X  my $i = shift;
+X  
+X  $nwseq1o = $nwseq1[$i] . $nwseq1o;
+X  $nwseq2o = "-$nwseq2o";
+X }
+X 
+X 
+X sub prepend_second_only {
+X 
+X  my $j = shift;
+X  
+X  $nwseq1o = "-$nwseq1o";
+X  $nwseq2o = $nwseq2[$j] . $nwseq2o;
+X }
+X 
+X 
+X sub get_identity {
+X  
+X  my ($iseq1, $iseq2) = @_;
+X  
+X  my $iss = 0.0;
+X  
+X  @nwseq1 = split(//, $iseq1);
+X  @nwseq2 = split(//, $iseq2);
+X  
+X  $nwseq1o = '';
+X  $nwseq2o = '';
+X 
+X  my $score = $matcher->align(\@nwseq1, \@nwseq2, { align => \&prepend_align, shift_a => \&prepend_first_only, shift_b => \&prepend_second_only, });
+X  
+X  my @nwseq1a = split(//, $nwseq1o);
+X  my @nwseq2a = split(//, $nwseq2o);
+X  
+X  my $niseq1 = @nwseq1a;
+X  my $niseq2 = @nwseq2a;
+X  
+X  my $isid1 = 0;
+X  my $isid2 = 0;
+X  
+X  if ( $niseq1 == $niseq2 )
+X  {
+X   for ( my $ixa = 0; $ixa < $niseq1; $ixa++ )
+X   {
+X    $isid1++ if ( $nwseq1a[$ixa] ne '-' and $nwseq2a[$ixa] ne '-' and $nwseq1a[$ixa] eq $nwseq2a[$ixa] );
+X    $isid2++ if ( $nwseq1a[$ixa] ne '-' and $nwseq2a[$ixa] ne '-' );
+X   }
+X  }
+X  
+X  $iss = $isid1 / $isid2 if ( $isid2 );
+X  
+X  return $iss;
+X }
+X 
+X print "------------------------------------------------------------\n";
+X print "                          ethread\n";
+X print "                        version 2.0\n";
+X print "              selection of structure templates\n\n";
+X print "       report bugs and issues to michal\@brylinski.org\n";
+X print "------------------------------------------------------------\n\n";
+X 
+X die "ET_LIBFAS is not set\n" if !( $ENV{'ET_LIBFAS'} );
+X die "ET_LIBPDB is not set\n" if !( $ENV{'ET_LIBPDB'} );
+X die "ET_LIBRFC is not set\n" if !( $ENV{'ET_LIBRFC'} );
+X die "ET_BINDIR is not set\n" if !( $ENV{'ET_BINDIR'} );
+X die "ET_STRIDE is not set\n" if !( $ENV{'ET_STRIDE'} );
+X 
+X my $lib01 = $ENV{'ET_LIBFAS'};
+X my $lib02 = $ENV{'ET_LIBPDB'};
+X my $lib03 = $ENV{'ET_LIBRFC'};
+X my $bindir = $ENV{'ET_BINDIR'};
+X my $stride = $ENV{'ET_STRIDE'};
+X my $falign = '';
+X 
+X $falign = $ENV{'ET_FALIGN'} if ( $ENV{'ET_FALIGN'} );
+X 
+X die "Could not find template library in fasta format\n" if ( !( -e $lib01 ) );
+X die "Could not find template library in pdb format\n" if ( !( -e $lib02 ) or !( -d $lib02 ) );
+X die "Could not find rfc models (ethread)\n" if ( !( -e "$lib03/ethread_rfc_h.pkl" ) or !( -e "$lib03/ethread_rfc_l.pkl" ) );
+X die "Could not find ethread bin dir\n" if ( !( -e $bindir ) or !( -d $bindir ) );
+X die "Could not find rfc scripts (ethread)\n" if ( !( -e "$bindir/ethread_rfc_h.py" ) or !( -e "$bindir/ethread_rfc_l.py" ) );
+X die "Could not find stride\n" if ( !( -e $stride ) or !length($stride) );
+X 
+X if ($#ARGV < 13)
+X {
+X  print "ethread -t <target sequence in FASTA format>\n";
+X  print "        -p <psipred ss2 file>\n";
+X  print "        -h <hhsearch out file>\n";
+X  print "        -r <raptorx rank file>\n";
+X  print "        -z <sparksx zs12 file>\n";
+X  print "        -a <sparksx aln file>\n";
+X  print "        -o <output file for eThread alignments>\n";
+X  print "\n";
+X  print "Additional options:\n";
+X  print "        -d <top templates to add, default 1>\n";
+X  print "        -n <max number of eThread templates, default 10>\n";
+X  print "        -b <sequence identity threshold for benchmarks, default 1.0>\n";
+X  print "        -c <classifier threshold, default 0.5>\n";
+X  print "\n";
+X  print "Functional templates:\n";
+X  print "        -lig <output file for ligand-bound templates>\n";
+X  print "        -hom <output file for homo-dimer templates>\n";
+X  print "        -het <output file for hetero-dimer templates>\n";
+X  die "\n";
+X }
+X 
+X my $ftar1 = '';
+X my $fpsi1 = '';
+X my $fhhp1 = '';
+X my $frap1 = '';
+X my $fspa1 = '';
+X my $fspa2 = '';
+X my $fout1 = '';
+X my $fout2 = '';
+X my $fout3 = '';
+X my $fout4 = '';
+X my $fcut1 = 1.0;
+X my $fcut2 = 0.5;
+X my $fcut3 = 10;
+X my $fcut4 = 0.5;
+X my $fcut5 = 0.5;
+X my $fcut6 = 0.5;
+X my $fcut7 = 0.5;
+X my $ftop1 = 1;
+X my $fopt1 = 0;
+X 
+X my $hh_mean1 =  75.651; my $hh_std1 = 40.352;
+X my $rx_mean1 = 100.960; my $rx_std1 = 78.954;
+X my $sp_mean1 =   2.212; my $sp_std1 =  1.578;
+X 
+X my $hh_mean2 =  71.966; my $hh_std2 = 41.088;
+X my $rx_mean2 = 117.378; my $rx_std2 = 86.699;
+X my $sp_mean2 =   2.412; my $sp_std2 =  1.597;
+X 
+X for ( my $i = 0; $i <= $#ARGV; $i++ )
+X {
+X  $ftar1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-t' );
+X  $fpsi1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-p' );
+X  $fhhp1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-h' );
+X  $frap1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-r' );
+X  $fspa1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-z' );
+X  $fspa2 = $ARGV[$i+1] if ( $ARGV[$i] eq '-a' );
+X  $fout1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-o' );
+X  $fcut1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-b' );
+X  $fcut2 = $ARGV[$i+1] if ( $ARGV[$i] eq '-c' );
+X  $fcut3 = $ARGV[$i+1] if ( $ARGV[$i] eq '-n' );
+X  $ftop1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-d' );
+X  $fout2 = $ARGV[$i+1] if ( $ARGV[$i] eq '-lig' );
+X  $fout3 = $ARGV[$i+1] if ( $ARGV[$i] eq '-hom' );
+X  $fout4 = $ARGV[$i+1] if ( $ARGV[$i] eq '-het' );
+X }
+X 
+X die "Provide output filename\n" if ( !length($fout1) );
+X die "Provide target sequence\n" if ( !( -e $ftar1 ) or !length($ftar1) );
+X die "Provide psipred ss2 file\n" if ( !( -e $fpsi1 ) or !length($fpsi1) );
+X die "Provide hhsearch out file\n" if ( !( -e $fhhp1 ) or !length($fhhp1) );
+X die "Provide raptor rank file\n" if ( !( -e $frap1 ) or !length($frap1) );
+X die "Provide sparksx zs12 file\n" if ( !( -e $fspa1 ) or !length($fspa1) );
+X die "Provide sparksx aln file\n" if ( !( -e $fspa2 ) or !length($fspa2) );
+X die "Sequence identity threshold must be in the range of 0-1\n" if ( $fcut1 < 0.0 or $fcut1 > 1.0 );
+X die "Classifier threshold must be in the range of 0-1\n" if ( $fcut2 < 0.0 or $fcut2 > 1.0 );
+X die "Max number of eThread templates must be larger than 0\n" if ( $fcut3 < 1 );
+X die "Top templates flag must be integer greater or equal to 0\n" if ( $ftop1 < 0 );
+X 
+X if ( length($fout2) )
+X {
+X  die "Could not find rfc models (ligand)\n" if ( !( -e "$lib03/ethread_rfc_lig.pkl" ) or !( -e "$lib03/ethread_rfc_pkt.pkl" ) );
+X  die "Could not find rfc scripts (ligand)\n" if ( !( -e "$bindir/ethread_rfc_lig.py" ) or !( -e "$bindir/ethread_rfc_pkt.py" ) );
+X }
+X 
+X if ( length($fout3) and length($fout4) )
+X {
+X  die "Options -hom and -het are mutually exclusive\n";
+X }
+X 
+X if ( length($fout3) )
+X {
+X  die "Could not find rfc models (ppi-homo)\n" if ( !( -e "$lib03/ethread_rfc_homo_mcc.pkl" ) or !( -e "$lib03/ethread_rfc_homo_isc.pkl" ) );
+X  die "Could not find rfc scripts (ppi-homo)\n" if ( !( -e "$bindir/ethread_rfc_homo_mcc.py" ) or !( -e "$bindir/ethread_rfc_homo_isc.py" ) );
+X  
+X  $fopt1 = 1;
+X }
+X 
+X if ( length($fout4) )
+X {
+X  die "Could not find rfc models (ppi-hetero)\n" if ( !( -e "$lib03/ethread_rfc_hete_mcc.pkl" ) or !( -e "$lib03/ethread_rfc_hete_isc.pkl" ) );
+X  die "Could not find rfc scripts (ppi-hetero)\n" if ( !( -e "$bindir/ethread_rfc_hete_mcc.py" ) or !( -e "$bindir/ethread_rfc_hete_isc.py" ) );
+X  
+X  $fopt1 = 2;
+X }
+X 
+X 
+X printf("!!! Benchmarking mode activated with max sid of %s !!!\n\n", $fcut1) if ( $fcut1 < 1.0 );
+X 
+X my $bt0 = Benchmark->new;
+X 
+X my $dir1 = getcwd();
+X 
+X my $dir2 = tempdir( CLEANUP => 1 );
+X 
+X printf("Tempdir created: %s\n\n", $dir2);
+X 
+X my ($fh1, $tmpfil1) = tempfile( DIR => $dir2, UNLINK => 1);
+X my ($fh2, $tmpfil2) = tempfile( DIR => $dir2, UNLINK => 1);
+X my ($fh3, $tmpfil3) = tempfile( DIR => $dir2, UNLINK => 1);
+X my ($fh4, $tmpfil4) = tempfile( DIR => $dir2, UNLINK => 1);
+X 
+X my @tt01 = split(/\//, $tmpfil1);
+X my @tt02 = split(/\//, $tmpfil2);
+X my @tt03 = split(/\//, $tmpfil3);
+X my @tt04 = split(/\//, $tmpfil4);
+X 
+X my $tmpfil1b = pop(@tt01);
+X my $tmpfil2b = pop(@tt02);
+X my $tmpfil3b = pop(@tt03);
+X my $tmpfil4b = pop(@tt04);
+X 
+X 
+X # check library version -------------------------
+X 
+X my $ver1 = $lib02;
+X 
+X substr($ver1, -1, 1) = '' if ( substr($ver1, -1, 1) eq '/' );
+X 
+X $ver1 = "$ver1/../../version.info";
+X 
+X if ( -e $ver1 )
+X {
+X  my @ver2 = read_file($ver1); chomp(@ver2);
+X  
+X  print "Template library: $ver2[0]\n\n";
+X }
+X 
+X 
+X # sequences fasta -------------------------------
+X 
+X print "Parsing library files ... ";
+X 
+X my $seq1 = '';
+X 
+X my @seq2 = read_file($ftar1); chomp(@seq2);
+X 
+X my $seq3 = '';
+X 
+X foreach my $wseq2 (@seq2)
+X {
+X  $seq1 .= $wseq2 if ( length($wseq2) and !( $wseq2 =~/\>/ ) );
+X  
+X  if ( $wseq2 =~/\>/ )
+X  {
+X   my @tt8 = split(/\ /, $wseq2);
+X   
+X   $seq3 = shift(@tt8);
+X   
+X   $seq3 =~ s/\>//g;
+X  }
+X }
+X 
+X my %lib1 = ();
+X 
+X my @lib2 = read_file($lib01); chomp(@lib2);
+X 
+X push(@lib2, '>');
+X 
+X my @lib3 = ();
+X 
+X foreach my $wlib2 (@lib2)
+X {
+X  if ( $wlib2 =~/\>/ )
+X  {
+X   if ( @lib3 )
+X   {
+X    my $tt1 = shift(@lib3);
+X    
+X    $tt1 =~ s/\>//g;
+X    
+X    my @tt2 = split(/\ /, $tt1);
+X    
+X    my $tt3 = shift(@tt2);
+X    
+X    my $tt4 = '';
+X    
+X    foreach my $wlib3 (@lib3)
+X    {
+X     $tt4 .= $wlib3 if ( length($wlib3) and !( $wlib3 =~/\>/ ) );
+X    }
+X    
+X    $lib1{$tt3} = $tt4;
+X   }
+X   
+X   @lib3 = ();
+X  }
+X  
+X  push(@lib3, $wlib2);
+X }
+X 
+X print "done\n\n";
+X 
+X 
+X # psipred ---------------------------------------
+X 
+X print "Parsing threading files .";
+X 
+X my @psi1 = read_file($fpsi1); chomp(@psi1);
+X 
+X my @psi2 = ();
+X 
+X foreach my $wpsi1 (@psi1)
+X {
+X  if ( length($wpsi1) == 30 and !( $wpsi1 =~ /PSIPRED/ ) )
+X  {
+X   my $tt2 = substr($wpsi1, 0, 4) * 1;
+X   
+X   $psi2[$tt2][0] = substr($wpsi1,  5, 1); # sequence code
+X   $psi2[$tt2][1] = substr($wpsi1,  7, 1); # sec str code
+X   $psi2[$tt2][2] = substr($wpsi1,  9, 7) * 1.0; # prob coil
+X   $psi2[$tt2][3] = substr($wpsi1, 16, 7) * 1.0; # prob alpha
+X   $psi2[$tt2][4] = substr($wpsi1, 23, 7) * 1.0; # prob beta
+X  }
+X }
+X 
+X 
+X # hhpred ----------------------------------------
+X 
+X print ".";
+X 
+X my %hhp1 = ();
+X 
+X my @hhp2 = ();
+X 
+X my @dat1 = read_file($fhhp1); chomp(@dat1);
+X 
+X my $w1 = 0;
+X 
+X foreach my $wdat1 (@dat1)
+X {
+X  $w1 = 0 if ( !length($wdat1) );
+X  
+X  if ( $w1 )
+X  {
+X   my $tpl1 = substr($wdat1, 4, 15);
+X   
+X   while( $tpl1 =~ /\ / ) { $tpl1 =~ s/\ //g; }
+X   
+X   my @dat2 = ();
+X   
+X   my $w2 = 0;
+X   
+X   foreach my $wdat2 (@dat1)
+X   {
+X    if ( $wdat2 =~ /No / and length($wdat2) > 2 )
+X    {
+X     $w2 = 0 if ( substr($wdat2, 0, 3) eq 'No ' );
+X    }
+X    
+X    $w2 = 0 if ( $wdat2 eq 'Done!' );
+X    
+X    $w2 = 1 if ( $wdat2 eq ">$tpl1" and !(@dat2) );
+X    
+X    if ( $w2 )
+X    {
+X     push(@dat2, $wdat2);
+X    }
+X   }
+X   
+X   my @dat3 = grep(/Probab=/, @dat2);
+X   
+X   my @tt5 = split(/\ /, $dat3[0]);
+X   
+X   my $tt6 = shift(@tt5);
+X   
+X   my @tt7 = split(/\=/, $tt6);
+X   
+X   my $prb1 = pop(@tt7); $prb1 *= 1.0;
+X   
+X   my @dat4 = grep(/Q $seq3 /, @dat2);
+X   my @dat5 = grep(/T $tpl1 /, @dat2);
+X   
+X   my $rq1 = 0;
+X   my $rq2 = 0;
+X   
+X   my $sq = '';
+X   
+X   my $at1 = '';
+X   my $at2 = '';
+X   
+X   foreach my $wdat4 (@dat4)
+X   {
+X    $wdat4 =~ s/\(/\ /g;
+X    $wdat4 =~ s/\)/\ /g;
+X    
+X    while( $wdat4 =~ /\ \ / ) { $wdat4 =~ s/\ \ /\ /g; }
+X    
+X    my @tt8 = split(/\ /, $wdat4);
+X    
+X    $rq1 = $tt8[2] if ( $rq1 < 1 );
+X    
+X    $rq2 = $tt8[4];
+X    
+X    $sq .= $tt8[3];
+X   }
+X   
+X   if ( $rq1 > 1 )
+X   {
+X    $sq = substr($seq1, 0, $rq1 - 1).$sq;
+X    
+X    for ( my $xa = 0; $xa < $rq1 - 1; $xa++ )
+X    {
+X     $at1 .= '-';
+X    }
+X   }
+X   
+X   if ( $rq2 < length($seq1) )
+X   {
+X    $sq .= substr($seq1, $rq2, length($seq1) - $rq2);
+X    
+X    for ( my $xa = $rq2; $xa < length($seq1); $xa++ )
+X    {
+X     $at2 .= '-';
+X    }
+X   }
+X   
+X   my $rt1 = 0;
+X   my $rt2 = 0;
+X   
+X   my $st = '';
+X   
+X   my $aq1 = '';
+X   my $aq2 = '';
+X   
+X   foreach my $wdat5 (@dat5)
+X   {
+X    $wdat5 =~ s/\(/\ /g;
+X    $wdat5 =~ s/\)/\ /g;
+X    
+X    while( $wdat5 =~ /\ \ / ) { $wdat5 =~ s/\ \ /\ /g; }
+X    
+X    my @tt9 = split(/\ /, $wdat5);
+X    
+X    $rt1 = $tt9[2] if ( $rt1 < 1 );
+X    
+X    $rt2 = $tt9[4];
+X    
+X    $st .= $tt9[3];
+X   }
+X   
+X   if ( $rt1 > 1 )
+X   {
+X    $st = substr($lib1{$tpl1}, 0, $rt1 - 1).$st;
+X    
+X    for ( my $xa = 0; $xa < $rt1 - 1; $xa++ )
+X    {
+X     $aq1 .= '-';
+X    }
+X   }
+X   
+X   if ( $rt2 < length($lib1{$tpl1}) )
+X   {
+X    $st .= substr($lib1{$tpl1}, $rt2, length($lib1{$tpl1}) - $rt2);
+X    
+X    for ( my $xa = $rt2; $xa < length($lib1{$tpl1}); $xa++ )
+X    {
+X     $aq2 .= '-';
+X    }
+X   }
+X   
+X   $sq = $aq1.$sq.$aq2;
+X   $st = $at1.$st.$at2;
+X   
+X   if ( !exists $hhp1{$tpl1} )
+X   {
+X    $hhp1{$tpl1} = "$prb1:$sq:$st";
+X    
+X    push(@hhp2, $tpl1);
+X   }
+X  }
+X  
+X  $w1 = 1 if ( $wdat1 =~ /Prob E-value P-value  Score    SS Cols Query HMM  Template HMM/ );
+X }
+X 
+X 
+X # raptor ----------------------------------------
+X 
+X print ".";
+X 
+X my %rap1 = ();
+X 
+X my @rap2 = ();
+X 
+X @dat1 = read_file($frap1); chomp(@dat1);
+X 
+X $w1 = 0;
+X 
+X foreach my $wdat1 (@dat1)
+X {
+X  $w1 = 0 if ( !length($wdat1) );
+X  
+X  if ( $w1 )
+X  {
+X   my $tpl1 = substr($wdat1, 5, 10);
+X   
+X   while( $tpl1 =~ /\ / ) { $tpl1 =~ s/\ //g; }
+X   
+X   my $sco1 = substr($wdat1, 29, 9) * 1.0;
+X   
+X   my @dat2 = ();
+X   
+X   my $w2 = 0;
+X   
+X   foreach my $wdat2 (@dat1)
+X   {
+X    if ( $wdat2 =~ /No / and length($wdat2) > 2 )
+X    {
+X     $w2 = 0 if ( substr($wdat2, 0, 3) eq 'No ' );
+X    }
+X    
+X    $w2 = 0 if ( $wdat2 eq 'Done!' );
+X    
+X    $w2 = 1 if ( $wdat2 eq ">$tpl1" and !(@dat2) );
+X    
+X    if ( $w2 )
+X    {
+X     push(@dat2, $wdat2);
+X    }
+X   }
+X   
+X   my @dat4 = grep(/S $seq3 /, @dat2);
+X   my @dat5 = grep(/T $tpl1 /, @dat2);
+X   
+X   my $rq1 = 0;
+X   my $rq2 = 0;
+X   
+X   my $sq = '';
+X   
+X   my $at1 = '';
+X   my $at2 = '';
+X   
+X   foreach my $wdat4 (@dat4)
+X   {
+X    $wdat4 =~ s/\(/\ /g;
+X    $wdat4 =~ s/\)/\ /g;
+X    
+X    while( $wdat4 =~ /\ \ / ) { $wdat4 =~ s/\ \ /\ /g; }
+X    
+X    my @tt8 = split(/\ /, $wdat4);
+X    
+X    $rq1 = $tt8[2] if ( $rq1 < 1 );
+X    
+X    $rq2 = $tt8[4];
+X    
+X    $sq .= $tt8[3];
+X   }
+X   
+X   if ( $rq1 > 1 )
+X   {
+X    $sq = substr($seq1, 0, $rq1 - 1).$sq;
+X    
+X    for ( my $xa = 0; $xa < $rq1 - 1; $xa++ )
+X    {
+X     $at1 .= '-';
+X    }
+X   }
+X   
+X   if ( $rq2 < length($seq1) )
+X   {
+X    $sq .= substr($seq1, $rq2, length($seq1) - $rq2);
+X    
+X    for ( my $xa = $rq2; $xa < length($seq1); $xa++ )
+X    {
+X     $at2 .= '-';
+X    }
+X   }
+X   
+X   my $rt1 = 0;
+X   my $rt2 = 0;
+X   
+X   my $st = '';
+X   
+X   my $aq1 = '';
+X   my $aq2 = '';
+X   
+X   foreach my $wdat5 (@dat5)
+X   {
+X    $wdat5 =~ s/\(/\ /g;
+X    $wdat5 =~ s/\)/\ /g;
+X    
+X    while( $wdat5 =~ /\ \ / ) { $wdat5 =~ s/\ \ /\ /g; }
+X    
+X    my @tt9 = split(/\ /, $wdat5);
+X    
+X    $rt1 = $tt9[2] if ( $rt1 < 1 );
+X    
+X    $rt2 = $tt9[4];
+X    
+X    $st .= $tt9[3];
+X   }
+X   
+X   if ( $rt1 > 1 )
+X   {
+X    $st = substr($lib1{$tpl1}, 0, $rt1 - 1).$st;
+X    
+X    for ( my $xa = 0; $xa < $rt1 - 1; $xa++ )
+X    {
+X     $aq1 .= '-';
+X    }
+X   }
+X   
+X   if ( $rt2 < length($lib1{$tpl1}) )
+X   {
+X    $st .= substr($lib1{$tpl1}, $rt2, length($lib1{$tpl1}) - $rt2);
+X    
+X    for ( my $xa = $rt2; $xa < length($lib1{$tpl1}); $xa++ )
+X    {
+X     $aq2 .= '-';
+X    }
+X   }
+X   
+X   $sq = $aq1.$sq.$aq2;
+X   $st = $at1.$st.$at2;
+X   
+X   if ( !exists $rap1{$tpl1} )
+X   {
+X    $rap1{$tpl1} = "$sco1:$sq:$st";
+X    
+X    push(@rap2, $tpl1);
+X   }
+X  }
+X  
+X  $w1 = 1 if ( $wdat1 =~ /No   Template    Pvalue      Score       qRange      tRange/ );
+X }
+X 
+X 
+X # sparks ----------------------------------------
+X 
+X my %spa1 = ();
+X 
+X my @spa2 = ();
+X 
+X print ".";
+X 
+X @dat1 = read_file($fspa1); chomp(@dat1);
+X 
+X foreach my $wdat1 (@dat1)
+X {
+X  my @tt10 = split(/\ /, $wdat1);
+X  
+X  if ( !exists $spa1{$tt10[1]} )
+X  {
+X   $spa1{$tt10[1]} = "$tt10[2]";
+X   
+X   push(@spa2, $tt10[1]);
+X  }
+X }
+X 
+X my @dat2 = read_file($fspa2); chomp(@dat2);
+X 
+X my $ndat2 = @dat2;
+X 
+X for ( my $xa = 0; $xa < $ndat2; $xa += 4 )
+X {
+X  my @tt8 = split(/\ /, $dat2[$xa]);
+X  
+X  $spa1{$tt8[0]} .= ':'.($dat2[$xa+2]).':'.($dat2[$xa+3]) if ( exists $spa1{$tt8[0]} );
+X }
+X 
+X print " done\n\n";
+X 
+X 
+X # removing homologs for benchmarks --------------
+X 
+X my %hom1 = ();
+X 
+X my @tpl2 = ();
+X 
+X foreach my $whhp2 (@hhp2)
+X {
+X  if ( exists $rap1{$whhp2} )
+X  {
+X   push(@tpl2, $whhp2);
+X  }
+X }
+X 
+X my $ntpl2 = @tpl2;
+X 
+X if ( $fcut1 < 1.0 )
+X {
+X  print "Excluding homologs ($ntpl2) ... ";
+X  
+X  my @tpl3 = ();
+X  
+X  my $ntpl3 = 0;
+X  
+X  foreach my $wtpl2 (@tpl2)
+X  {
+X   my $sid1 = 0.0;
+X   
+X   if ( exists $hom1{$wtpl2} )
+X   {
+X    $sid1 = $hom1{$wtpl2};
+X   }
+X   else
+X   {
+X    if ( -e $falign )
+X    {
+X     open (FAL, "$falign $seq1 $lib1{$wtpl2} 3 2>&1 |") || die "Cannot run $falign $seq1 $lib1{$wtpl2} 3\n";
+X      my @fal1=<FAL>;
+X      chomp(@fal1);
+X     close (FAL);
+X    
+X     my @fal2 = grep(/Sequence identity:/, @fal1);
+X    
+X     while( $fal2[0] =~ /\:/ ) { $fal2[0] =~ s/\:/\ /g; }
+X     while( $fal2[0] =~ /\(/ ) { $fal2[0] =~ s/\(/\ /g; }
+X     while( $fal2[0] =~ /\ \ / ) { $fal2[0] =~ s/\ \ /\ /g; }
+X    
+X     my @fal3 = split(/\ /, $fal2[0]);
+X    
+X     $sid1 = $fal3[2];
+X    }
+X    else
+X    {
+X     $sid1 = get_identity($seq1, $lib1{$wtpl2});
+X    }
+X   
+X    $hom1{$wtpl2} = $sid1;
+X   }
+X   
+X   if ( $sid1 <= $fcut1 )
+X   {
+X    push(@tpl3, $wtpl2);
+X   }
+X   else
+X   {
+X    $ntpl3++;
+X    
+X    print "$ntpl3 ";
+X   }
+X  }
+X  
+X  @tpl2 = @tpl3;
+X  
+X  $ntpl2 = @tpl2;
+X  
+X  my @hhp3 = ();
+X  my @rap3 = ();
+X  my @spa3 = ();
+X  
+X  foreach my $whhp2 (@hhp2)
+X  {
+X   my $w3 = 1;
+X   
+X   if ( exists $hom1{$whhp2} )
+X   {
+X    $w3 = 0 if ( $hom1{$whhp2} > $fcut1 );
+X   }
+X   
+X   push(@hhp3, $whhp2) if ( $w3 );
+X  }
+X  
+X  @hhp2 = @hhp3;
+X  
+X  foreach my $wrap2 (@rap2)
+X  {
+X   my $w3 = 1;
+X   
+X   if ( exists $hom1{$wrap2} )
+X   {
+X    $w3 = 0 if ( $hom1{$wrap2} > $fcut1 );
+X   }
+X   
+X   push(@rap3, $wrap2) if ( $w3 );
+X  }
+X  
+X  @rap2 = @rap3;
+X  
+X  foreach my $wspa2 (@spa2)
+X  {
+X   my $w3 = 1;
+X   
+X   if ( exists $hom1{$wspa2} )
+X   {
+X    $w3 = 0 if ( $hom1{$wspa2} > $fcut1 );
+X   }
+X   
+X   push(@spa3, $wspa2) if ( $w3 );
+X  }
+X  
+X  @spa2 = @spa3;
+X  
+X  print "done\n\n";
+X }
+X 
+X my $nhhp2 = @hhp2;
+X my $nrap2 = @rap2;
+X my $nspa2 = @spa2;
+X 
+X 
+X # ranking ---------------------------------------
+X 
+X my %ran1 = ();
+X my %ran2 = ();
+X 
+X my $nran1 = 0;
+X my $nran2 = 0;
+X 
+X for ( my $xa = 0; $xa < $nhhp2; $xa++ )
+X {
+X  $hhp1{$hhp2[$xa]} = ($xa+1).':'.$hhp1{$hhp2[$xa]};
+X  
+X  if ( exists $hhp1{$hhp2[$xa]} and exists $rap1{$hhp2[$xa]} )
+X  {
+X   $ran1{$hhp2[$xa]} = ($xa+1);
+X   
+X   $nran1++;
+X  }
+X  
+X  if ( exists $hhp1{$hhp2[$xa]} and exists $rap1{$hhp2[$xa]} and exists $spa1{$hhp2[$xa]} )
+X  {
+X   $ran2{$hhp2[$xa]} = ($xa+1);
+X   
+X   $nran2++;
+X  }
+X }
+X 
+X for ( my $xa = 0; $xa < $nrap2; $xa++ )
+X {
+X  $rap1{$rap2[$xa]} = ($xa+1).':'.$rap1{$rap2[$xa]};
+X  
+X  $ran1{$rap2[$xa]} += ($xa+1) if ( exists $hhp1{$rap2[$xa]} and exists $rap1{$rap2[$xa]} );
+X  $ran2{$rap2[$xa]} += ($xa+1) if ( exists $hhp1{$rap2[$xa]} and exists $rap1{$rap2[$xa]} and exists $spa1{$rap2[$xa]} );
+X }
+X 
+X for ( my $xa = 0; $xa < $nspa2; $xa++ )
+X {
+X  $spa1{$spa2[$xa]} = ($xa+1).':'.$spa1{$spa2[$xa]};
+X }
+X 
+X 
+X # templates top ---------------------------------
+X 
+X my $n3 = 0;
+X 
+X my @hhp6 = ();
+X my @rap6 = ();
+X my @spa6 = ();
+X 
+X if ( $ftop1 )
+X {
+X  print "Adding top templates ... ";
+X  
+X  for ( my $xa = 0; $xa < $ftop1; $xa++ )
+X  {
+X   if ( $xa < $nhhp2 )
+X   {
+X    my $top1 = $hhp2[$xa];
+X    
+X    my @top2 = split(/\:/, $hhp1{$top1});
+X    
+X    my $top3 = 0.0;
+X    
+X    $top3 = -0.044147 + 0.16768 * log($top2[1]) if ( $top2[1] > 0.0 );
+X    
+X    $top3 = 0.0 if ( $top3 < 0.0 );
+X    $top3 = 1.0 if ( $top3 > 1.0 );
+X    
+X    if ( !exists $hom1{$top1} )
+X    {
+X     my $sid2 = 0.0;
+X     
+X     if ( -e $falign )
+X     {
+X      open (FAL, "$falign $seq1 $lib1{$top1} 3 2>&1 |") || die "Cannot run $falign $seq1 $lib1{$top1} 3\n";
+X       my @fal1=<FAL>;
+X       chomp(@fal1);
+X      close (FAL);
+X      
+X      my @fal2 = grep(/Sequence identity:/, @fal1);
+X      
+X      while( $fal2[0] =~ /\:/ ) { $fal2[0] =~ s/\:/\ /g; }
+X      while( $fal2[0] =~ /\(/ ) { $fal2[0] =~ s/\(/\ /g; }
+X      while( $fal2[0] =~ /\ \ / ) { $fal2[0] =~ s/\ \ /\ /g; }
+X      
+X      my @fal3 = split(/\ /, $fal2[0]);
+X      
+X      $sid2 = $fal3[2];
+X     }
+X     else
+X     {
+X      $sid2 = get_identity($seq1, $lib1{$top1});
+X     }
+X    
+X     $hom1{$top1} = $sid2;
+X    }
+X    
+X    push(@hhp6, $top1.':'.$hom1{$top1}.':T:'.$top3.':H:'.$hhp1{$top1});
+X    
+X    printf("%d ", ++$n3);
+X   }
+X   
+X   if ( $xa < $nrap2 )
+X   {
+X    my $top1 = $rap2[$xa];
+X    
+X    my @top2 = split(/\:/, $rap1{$top1});
+X    
+X    my $top3 = 0.0;
+X    
+X    $top3 = -0.048003 + 0.15623 * log($top2[1]) if ( $top2[1] > 0.0 );
+X    
+X    $top3 = 0.0 if ( $top3 < 0.0 );
+X    $top3 = 1.0 if ( $top3 > 1.0 );
+X    
+X    if ( !exists $hom1{$top1} )
+X    {
+X     my $sid2 = 0.0;
+X     
+X     if ( -e $falign )
+X     {
+X      open (FAL, "$falign $seq1 $lib1{$top1} 3 2>&1 |") || die "Cannot run $falign $seq1 $lib1{$top1} 3\n";
+X       my @fal1=<FAL>;
+X       chomp(@fal1);
+X      close (FAL);
+X      
+X      my @fal2 = grep(/Sequence identity:/, @fal1);
+X      
+X      while( $fal2[0] =~ /\:/ ) { $fal2[0] =~ s/\:/\ /g; }
+X      while( $fal2[0] =~ /\(/ ) { $fal2[0] =~ s/\(/\ /g; }
+X      while( $fal2[0] =~ /\ \ / ) { $fal2[0] =~ s/\ \ /\ /g; }
+X      
+X      my @fal3 = split(/\ /, $fal2[0]);
+X      
+X      $sid2 = $fal3[2];
+X     }
+X     else
+X     {
+X      $sid2 = get_identity($seq1, $lib1{$top1});
+X     }
+X    
+X     $hom1{$top1} = $sid2;
+X    }
+X    
+X    push(@rap6, $top1.':'.$hom1{$top1}.':T:'.$top3.':R:'.$rap1{$top1});
+X    
+X    printf("%d ", ++$n3);
+X   }
+X   
+X   if ( $xa < $nspa2 )
+X   {
+X    my $top1 = $spa2[$xa];
+X    
+X    my @top2 = split(/\:/, $spa1{$top1});
+X    
+X    my $top3 = 0.0;
+X    
+X    $top3 = 0.49197 + 0.16581 * log($top2[1]) if ( $top2[1] > 0.0 );
+X    
+X    $top3 = 0.0 if ( $top3 < 0.0 );
+X    $top3 = 1.0 if ( $top3 > 1.0 );
+X    
+X    if ( !exists $hom1{$top1} )
+X    {
+X     my $sid2 = 0.0;
+X     
+X     if ( -e $falign )
+X     {
+X      open (FAL, "$falign $seq1 $lib1{$top1} 3 2>&1 |") || die "Cannot run $falign $seq1 $lib1{$top1} 3\n";
+X       my @fal1=<FAL>;
+X       chomp(@fal1);
+X      close (FAL);
+X     
+X      my @fal2 = grep(/Sequence identity:/, @fal1);
+X     
+X      while( $fal2[0] =~ /\:/ ) { $fal2[0] =~ s/\:/\ /g; }
+X      while( $fal2[0] =~ /\(/ ) { $fal2[0] =~ s/\(/\ /g; }
+X      while( $fal2[0] =~ /\ \ / ) { $fal2[0] =~ s/\ \ /\ /g; }
+X     
+X      my @fal3 = split(/\ /, $fal2[0]);
+X     
+X      $sid2 = $fal3[2];
+X     }
+X     else
+X     {
+X      $sid2 = get_identity($seq1, $lib1{$top1});
+X     }
+X    
+X     $hom1{$top1} = $sid2;
+X    }
+X    
+X    push(@spa6, $top1.':'.$hom1{$top1}.':T:'.$top3.':S:'.$spa1{$top1});
+X    
+X    printf("%d ", ++$n3);
+X   }
+X  }
+X  
+X  print "done\n\n";
+X }
+X 
+X my $nhhp6 = @hhp6;
+X my $nrap6 = @rap6;
+X my $nspa6 = @spa6;
+X 
+X 
+X # templates high --------------------------------
+X 
+X print "Selecting high scoring templates ($nran1) ... ";
+X 
+X my @rfc1 = ();
+X my @rfc2 = ();
+X 
+X foreach my $wran1 ( sort { $ran1{$a} <=> $ran1{$b} } keys %ran1 )
+X {
+X  my @hhp4 = split(/\:/, $hhp1{$wran1});
+X  my @rap4 = split(/\:/, $rap1{$wran1});
+X  
+X  my %hhp5 = ();
+X  my %rap5 = ();
+X  
+X  my %map1 = ();
+X  my %map2 = ();
+X  
+X  
+X  # coverage -------------------------------------
+X  
+X  my $a1 = 0;
+X  my $a2 = 0;
+X  
+X  my $cov2 = 0;
+X  
+X  for ( my $xa = 0; $xa < length($hhp4[3]); $xa++ )
+X  {
+X   my $tt3 = substr($hhp4[2], $xa, 1);
+X   my $tt4 = substr($hhp4[3], $xa, 1);
+X   
+X   $a1++ if ( $tt3 ne '-' );
+X   $a2++ if ( $tt4 ne '-' );
+X   
+X   if ( $tt3 ne '-' and $tt4 ne '-' )
+X   {
+X    $hhp5{"$a1:$a2"} = 1;
+X    
+X    $map1{$a1} = $a2;
+X    
+X    $cov2++;
+X   }
+X  }
+X  
+X  my $cov1 = $a1;
+X  
+X  $a1 = 0;
+X  $a2 = 0;
+X  
+X  my $cov3 = 0;
+X  
+X  for ( my $xa = 0; $xa < length($rap4[3]); $xa++ )
+X  {
+X   my $tt3 = substr($rap4[2], $xa, 1);
+X   my $tt4 = substr($rap4[3], $xa, 1);
+X  
+X   $a1++ if ( $tt3 ne '-' );
+X   $a2++ if ( $tt4 ne '-' );
+X  
+X   if ( $tt3 ne '-' and $tt4 ne '-' )
+X   {
+X    $rap5{"$a1:$a2"} = 1;
+X   
+X    $map2{$a1} = $a2;
+X   
+X    $cov3++;
+X   }
+X  }
+X  
+X  
+X  # jcc ------------------------------------------
+X  
+X  my $m11 = 0;
+X  my $m01 = 0;
+X  my $m10 = 0;
+X  
+X  for ( my $xa = 1; $xa <= length($seq1); $xa++ )
+X  {
+X   for ( my $xb = 1; $xb <= length($lib1{$wran1}); $xb++ )
+X   {
+X       if ( $hhp5{"$xa:$xb"} and $rap5{"$xa:$xb"} )
+X    {
+X     $m11++;
+X    }
+X    elsif ( $hhp5{"$xa:$xb"} and !$rap5{"$xa:$xb"} )
+X    {
+X     $m10++;
+X    }
+X    elsif ( !$hhp5{"$xa:$xb"} and $rap5{"$xa:$xb"} )
+X    {
+X     $m01++;
+X    }
+X   }
+X  }
+X  
+X  my $jac1 = 0.0;
+X  
+X  $jac1 = $m11 / ( $m01 + $m10 + $m11 ) if ( $m01 or $m10 or $m11 );
+X  
+X  
+X  # secondary structure --------------------------
+X  
+X  open (SEC, "$stride $lib02/$wran1.pdb 2>&1 |") || die "Cannot run $stride $lib02/$wran1.pdb\n";
+X   my @sec1=<SEC>;
+X   chomp(@sec1);
+X  close (SEC);
+X  
+X  my %sec2 = ();
+X  
+X  my @sec3 = grep(/ASG /, @sec1);
+X  
+X  foreach my $wsec3 (@sec3)
+X  {
+X   if ( length($wsec3) > 25 )
+X   {
+X    if ( substr($wsec3, 0, 3) eq 'ASG' )
+X    {
+X     my $tt4 = substr($wsec3, 11, 4) * 1;
+X     my $tt5 = substr($wsec3, 24, 1);
+X     
+X     if ( $tt5 eq 'H' )
+X     {
+X      $sec2{$tt4} = 'H';
+X     }
+X     elsif ( $tt5 eq 'E' )
+X     {
+X      $sec2{$tt4} = 'E';
+X     }
+X     else
+X     {
+X      $sec2{$tt4} = 'C';
+X     }
+X    }
+X   }
+X  }
+X  
+X  my $sec4 = 0.0;
+X  my $sec5 = 0.0;
+X  
+X  for ( my $xa = 1; $xa <= length($seq1); $xa++ )
+X  {
+X   # HHpred
+X   
+X   my $tt5 = 'C';
+X   
+X   if ( exists $map1{$xa} )
+X   {
+X    if ( exists $sec2{$map1{$xa}} )
+X    {
+X     $tt5 = $sec2{$map1{$xa}};
+X    }
+X   }
+X   
+X   my $tt6 = 0.0;
+X   
+X      if ( $tt5 eq 'C' )
+X   {
+X    $tt6 = $psi2[$xa][2];
+X   }
+X   elsif ( $tt5 eq 'H' )
+X   {
+X    $tt6 = $psi2[$xa][3];
+X   }
+X   elsif ( $tt5 eq 'E' )
+X   {
+X    $tt6 = $psi2[$xa][4];
+X   }
+X   
+X   $sec4 += $tt6;
+X   
+X   # Raptor
+X   
+X   $tt5 = 'C';
+X   
+X   if ( exists $map2{$xa} )
+X   {
+X    if ( exists $sec2{$map2{$xa}} )
+X    {
+X     $tt5 = $sec2{$map2{$xa}};
+X    }
+X   }
+X   
+X   $tt6 = 0.0;
+X   
+X      if ( $tt5 eq 'C' )
+X   {
+X    $tt6 = $psi2[$xa][2];
+X   }
+X   elsif ( $tt5 eq 'H' )
+X   {
+X    $tt6 = $psi2[$xa][3];
+X   }
+X   elsif ( $tt5 eq 'E' )
+X   {
+X    $tt6 = $psi2[$xa][4];
+X   }
+X   
+X   $sec5 += $tt6;
+X  }
+X  
+X  $sec4 /= length($seq1);
+X  $sec5 /= length($seq1);
+X  
+X  push(@rfc1, sprintf("%f %f %f %f %f %f %f %f %f\n", log($hhp4[0]), $hhp4[1], log($rap4[0]), $rap4[1], $jac1, $sec4, $sec5, $cov2/$cov1, $cov3/$cov1));
+X  push(@rfc2, $wran1);
+X }
+X 
+X my $nrfc1 = @rfc1;
+X my $nrfc2 = @rfc2;
+X 
+X my %rfc4 = ();
+X my %rfc5 = ();
+X 
+X my $nrfc4 = 0;
+X 
+X if ( $nrfc1 )
+X {
+X  write_file($tmpfil1, @rfc1);
+X  
+X  open (RFC, "$bindir/ethread_rfc_h.py $tmpfil1 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_h.py $tmpfil1\n";
+X   my @rfc3=<RFC>;
+X   chomp(@rfc3);
+X  close (RFC);
+X  
+X  unlink($tmpfil1) if ( -e $tmpfil1 );
+X  
+X  @rfc3 = grep(!/Parallel/, @rfc3);
+X  @rfc3 = grep(!/jobs/, @rfc3);
+X  
+X  my $nrfc3 = @rfc3;
+X  
+X  for ( my $xa = 0; $xa < $nrfc3; $xa++ )
+X  {
+X   while ( $rfc3[$xa] =~ /\[/ ) { $rfc3[$xa] =~ s/\[//g; }
+X   while ( $rfc3[$xa] =~ /\]/ ) { $rfc3[$xa] =~ s/\]//g; }
+X   while ( $rfc3[$xa] =~ /\t/ ) { $rfc3[$xa] =~ s/\t/\ /g; }
+X   while ( $rfc3[$xa] =~ /\ \ / ) { $rfc3[$xa] =~ s/\ \ /\ /g; }
+X   
+X   substr($rfc3[$xa],  0, 1) = '' if ( substr($rfc3[$xa],  0, 1) eq ' ' );
+X   substr($rfc3[$xa], -1, 1) = '' if ( substr($rfc3[$xa], -1, 1) eq ' ' );
+X   
+X   my @rfc6 = split(/\ /, $rfc3[$xa]);
+X   
+X   if ( $rfc6[1] + $rfc6[2] >= $fcut2 )
+X   {
+X    if ( !( exists $hom1{$rfc2[$xa]} ) )
+X    {
+X     if ( -e $falign )
+X     {
+X      open (FAL, "$falign $seq1 $lib1{$rfc2[$xa]} 3 2>&1 |") || die "Cannot run $falign $seq1 $lib1{$rfc2[$xa]} 3\n";
+X       my @fal1=<FAL>;
+X       chomp(@fal1);
+X      close (FAL);
+X      
+X      my @fal2 = grep(/Sequence identity:/, @fal1);
+X      
+X      while( $fal2[0] =~ /\:/ ) { $fal2[0] =~ s/\:/\ /g; }
+X      while( $fal2[0] =~ /\(/ ) { $fal2[0] =~ s/\(/\ /g; }
+X      while( $fal2[0] =~ /\ \ / ) { $fal2[0] =~ s/\ \ /\ /g; }
+X      
+X      my @fal3 = split(/\ /, $fal2[0]);
+X      
+X      $hom1{$rfc2[$xa]} = $fal3[2];
+X     }
+X     else
+X     {
+X      $hom1{$rfc2[$xa]} = get_identity($seq1, $lib1{$rfc2[$xa]});
+X     }
+X    }
+X    
+X    if ( $rfc6[2] > $rfc6[1] )
+X    {
+X     $rfc4{$nrfc4} = $rfc2[$xa].':'.$hom1{$rfc2[$xa]}.':H:'.$rfc6[2].':R:'.$rap1{$rfc2[$xa]};
+X    }
+X    else
+X    {
+X     $rfc4{$nrfc4} = $rfc2[$xa].':'.$hom1{$rfc2[$xa]}.':H:'.$rfc6[1].':H:'.$hhp1{$rfc2[$xa]};
+X    }
+X    
+X    $rfc5{$rfc2[$xa]} = $nrfc4++;
+X    
+X    printf("%d ", $nrfc4 + $n3);
+X   }
+X   
+X   last if ( $nrfc4 >= $fcut3 );
+X  }
+X }
+X 
+X print "done\n\n";
+X 
+X 
+X # templates low ---------------------------------
+X 
+X if ( $nrfc4 < $fcut3 )
+X {
+X  my %ran3 = ();
+X  
+X  my $nran3 = 0;
+X  
+X  foreach my $wran2 ( sort { $ran2{$a} <=> $ran2{$b} } keys %ran2 )
+X  {
+X   if ( !( exists $rfc5{$wran2} ) )
+X   {
+X    $ran3{$wran2} = $ran2{$wran2};
+X    
+X    $nran3++;
+X   }
+X  }
+X  
+X  print "Selecting low scoring templates ($nran3) ... ";
+X  
+X  my @rfc7 = ();
+X  my @rfc8 = ();
+X  
+X  foreach my $wran3 ( sort { $ran3{$a} <=> $ran3{$b} } keys %ran3 )
+X  {
+X   my @hhp4 = split(/\:/, $hhp1{$wran3});
+X   my @rap4 = split(/\:/, $rap1{$wran3});
+X   my @spa4 = split(/\:/, $spa1{$wran3});
+X   
+X   my %hhp5 = ();
+X   my %rap5 = ();
+X   my %spa5 = ();
+X   
+X   my %map1 = ();
+X   my %map2 = ();
+X   my %map3 = ();
+X   
+X   
+X   # coverage ------------------------------------
+X   
+X   my $a1 = 0;
+X   my $a2 = 0;
+X   
+X   my $cov2 = 0;
+X   
+X   for ( my $xa = 0; $xa < length($hhp4[3]); $xa++ )
+X   {
+X    my $tt3 = substr($hhp4[2], $xa, 1);
+X    my $tt4 = substr($hhp4[3], $xa, 1);
+X    
+X    $a1++ if ( $tt3 ne '-' );
+X    $a2++ if ( $tt4 ne '-' );
+X    
+X    if ( $tt3 ne '-' and $tt4 ne '-' )
+X    {
+X     $hhp5{"$a1:$a2"} = 1;
+X     
+X     $map1{$a1} = $a2;
+X     
+X     $cov2++;
+X    }
+X   }
+X   
+X   my $cov1 = $a1;
+X   
+X   $a1 = 0;
+X   $a2 = 0;
+X   
+X   my $cov3 = 0;
+X   
+X   for ( my $xa = 0; $xa < length($rap4[3]); $xa++ )
+X   {
+X    my $tt3 = substr($rap4[2], $xa, 1);
+X    my $tt4 = substr($rap4[3], $xa, 1);
+X   
+X    $a1++ if ( $tt3 ne '-' );
+X    $a2++ if ( $tt4 ne '-' );
+X   
+X    if ( $tt3 ne '-' and $tt4 ne '-' )
+X    {
+X     $rap5{"$a1:$a2"} = 1;
+X    
+X     $map2{$a1} = $a2;
+X    
+X     $cov3++;
+X    }
+X   }
+X   
+X   $a1 = 0;
+X   $a2 = 0;
+X   
+X   my $cov4 = 0;
+X   
+X   for ( my $xa = 0; $xa < length($spa4[3]); $xa++ )
+X   {
+X    my $tt3 = substr($spa4[2], $xa, 1);
+X    my $tt4 = substr($spa4[3], $xa, 1);
+X   
+X    $a1++ if ( $tt3 ne '-' );
+X    $a2++ if ( $tt4 ne '-' );
+X   
+X    if ( $tt3 ne '-' and $tt4 ne '-' )
+X    {
+X     $spa5{"$a1:$a2"} = 1;
+X    
+X     $map3{$a1} = $a2;
+X    
+X     $cov4++;
+X    }
+X   }
+X   
+X   
+X   # jcc -----------------------------------------
+X   
+X   my $hr11 = 0;
+X   my $hr01 = 0;
+X   my $hr10 = 0;
+X   
+X   my $hs11 = 0;
+X   my $hs01 = 0;
+X   my $hs10 = 0;
+X   
+X   my $rs11 = 0;
+X   my $rs01 = 0;
+X   my $rs10 = 0;
+X   
+X   for ( my $xa = 1; $xa <= length($seq1); $xa++ )
+X   {
+X    for ( my $xb = 1; $xb <= length($lib1{$wran3}); $xb++ )
+X    {
+X        if ( $hhp5{"$xa:$xb"} and $rap5{"$xa:$xb"} )
+X     {
+X      $hr11++;
+X     }
+X     elsif ( $hhp5{"$xa:$xb"} and !$rap5{"$xa:$xb"} )
+X     {
+X      $hr10++;
+X     }
+X     elsif ( !$hhp5{"$xa:$xb"} and $rap5{"$xa:$xb"} )
+X     {
+X      $hr01++;
+X     }
+X     
+X        if ( $hhp5{"$xa:$xb"} and $spa5{"$xa:$xb"} )
+X     {
+X      $hs11++;
+X     }
+X     elsif ( $hhp5{"$xa:$xb"} and !$spa5{"$xa:$xb"} )
+X     {
+X      $hs10++;
+X     }
+X     elsif ( !$hhp5{"$xa:$xb"} and $spa5{"$xa:$xb"} )
+X     {
+X      $hs01++;
+X     }
+X     
+X        if ( $rap5{"$xa:$xb"} and $spa5{"$xa:$xb"} )
+X     {
+X      $rs11++;
+X     }
+X     elsif ( $rap5{"$xa:$xb"} and !$spa5{"$xa:$xb"} )
+X     {
+X      $rs10++;
+X     }
+X     elsif ( !$rap5{"$xa:$xb"} and $spa5{"$xa:$xb"} )
+X     {
+X      $rs01++;
+X     }
+X    }
+X   }
+X   
+X   my $jac1 = 0.0;
+X   
+X   $jac1 = $hr11 / ( $hr01 + $hr10 + $hr11 ) if ( $hr01 or $hr10 or $hr11 );
+X   
+X   my $jac2 = 0.0;
+X   
+X   $jac2 = $hs11 / ( $hs01 + $hs10 + $hs11 ) if ( $hs01 or $hs10 or $hs11 );
+X   
+X   my $jac3 = 0.0;
+X   
+X   $jac3 = $rs11 / ( $rs01 + $rs10 + $rs11 ) if ( $rs01 or $rs10 or $rs11 );
+X   
+X   
+X   # secondary structure -------------------------
+X   
+X   open (SEC, "$stride $lib02/$wran3.pdb 2>&1 |") || die "Cannot run $stride $lib02/$wran3.pdb\n";
+X    my @sec1=<SEC>;
+X    chomp(@sec1);
+X   close (SEC);
+X   
+X   my %sec2 = ();
+X   
+X   my @sec3 = grep(/ASG /, @sec1);
+X   
+X   foreach my $wsec3 (@sec3)
+X   {
+X    if ( length($wsec3) > 25 )
+X    {
+X     if ( substr($wsec3, 0, 3) eq 'ASG' )
+X     {
+X      my $tt4 = substr($wsec3, 11, 4) * 1;
+X      my $tt5 = substr($wsec3, 24, 1);
+X      
+X      if ( $tt5 eq 'H' )
+X      {
+X       $sec2{$tt4} = 'H';
+X      }
+X      elsif ( $tt5 eq 'E' )
+X      {
+X       $sec2{$tt4} = 'E';
+X      }
+X      else
+X      {
+X       $sec2{$tt4} = 'C';
+X      }
+X     }
+X    }
+X   }
+X   
+X   my $sec4 = 0.0;
+X   my $sec5 = 0.0;
+X   my $sec6 = 0.0;
+X   
+X   for ( my $xa = 1; $xa <= length($seq1); $xa++ )
+X   {
+X    # HHpred
+X    
+X    my $tt5 = 'C';
+X    
+X    if ( exists $map1{$xa} )
+X    {
+X     if ( exists $sec2{$map1{$xa}} )
+X     {
+X      $tt5 = $sec2{$map1{$xa}};
+X     }
+X    }
+X    
+X    my $tt6 = 0.0;
+X    
+X       if ( $tt5 eq 'C' )
+X    {
+X     $tt6 = $psi2[$xa][2];
+X    }
+X    elsif ( $tt5 eq 'H' )
+X    {
+X     $tt6 = $psi2[$xa][3];
+X    }
+X    elsif ( $tt5 eq 'E' )
+X    {
+X     $tt6 = $psi2[$xa][4];
+X    }
+X    
+X    $sec4 += $tt6;
+X    
+X    # Raptor
+X    
+X    $tt5 = 'C';
+X    
+X    if ( exists $map2{$xa} )
+X    {
+X     if ( exists $sec2{$map2{$xa}} )
+X     {
+X      $tt5 = $sec2{$map2{$xa}};
+X     }
+X    }
+X    
+X    $tt6 = 0.0;
+X    
+X       if ( $tt5 eq 'C' )
+X    {
+X     $tt6 = $psi2[$xa][2];
+X    }
+X    elsif ( $tt5 eq 'H' )
+X    {
+X     $tt6 = $psi2[$xa][3];
+X    }
+X    elsif ( $tt5 eq 'E' )
+X    {
+X     $tt6 = $psi2[$xa][4];
+X    }
+X    
+X    $sec5 += $tt6;
+X    
+X    # Sparks
+X    
+X    $tt5 = 'C';
+X    
+X    if ( exists $map3{$xa} )
+X    {
+X     if ( exists $sec2{$map3{$xa}} )
+X     {
+X      $tt5 = $sec2{$map3{$xa}};
+X     }
+X    }
+X    
+X    $tt6 = 0.0;
+X    
+X       if ( $tt5 eq 'C' )
+X    {
+X     $tt6 = $psi2[$xa][2];
+X    }
+X    elsif ( $tt5 eq 'H' )
+X    {
+X     $tt6 = $psi2[$xa][3];
+X    }
+X    elsif ( $tt5 eq 'E' )
+X    {
+X     $tt6 = $psi2[$xa][4];
+X    }
+X    
+X    $sec6 += $tt6;
+X   }
+X   
+X   $sec4 /= length($seq1);
+X   $sec5 /= length($seq1);
+X   $sec6 /= length($seq1);
+X   
+X   push(@rfc7, sprintf("%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f\n", log($hhp4[0]), $hhp4[1], log($rap4[0]), $rap4[1], log($spa4[0]), $spa4[1], $jac1, $jac2, $jac3, $sec4, $sec5, $sec6, $cov2/$cov1, $cov3/$cov1, $cov4/$cov1));
+X   push(@rfc8, $wran3);
+X  }
+X  
+X  my $nrfc7 = @rfc7;
+X  my $nrfc8 = @rfc8;
+X  
+X  if ( $nrfc7 )
+X  {
+X   write_file($tmpfil2, @rfc7);
+X   
+X   open (RFC, "$bindir/ethread_rfc_l.py $tmpfil2 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_l.py $tmpfil2\n";
+X    my @rfc9=<RFC>;
+X    chomp(@rfc9);
+X   close (RFC);
+X   
+X   unlink($tmpfil2) if ( -e $tmpfil2 );
+X   
+X   @rfc9 = grep(!/Parallel/, @rfc9);
+X   @rfc9 = grep(!/jobs/, @rfc9);
+X   
+X   my $nrfc9 = @rfc9;
+X   
+X   for ( my $xa = 0; $xa < $nrfc9; $xa++ )
+X   {
+X    while ( $rfc9[$xa] =~ /\[/ ) { $rfc9[$xa] =~ s/\[//g; }
+X    while ( $rfc9[$xa] =~ /\]/ ) { $rfc9[$xa] =~ s/\]//g; }
+X    while ( $rfc9[$xa] =~ /\t/ ) { $rfc9[$xa] =~ s/\t/\ /g; }
+X    while ( $rfc9[$xa] =~ /\ \ / ) { $rfc9[$xa] =~ s/\ \ /\ /g; }
+X    
+X    substr($rfc9[$xa],  0, 1) = '' if ( substr($rfc9[$xa],  0, 1) eq ' ' );
+X    substr($rfc9[$xa], -1, 1) = '' if ( substr($rfc9[$xa], -1, 1) eq ' ' );
+X    
+X    my @rfc10 = split(/\ /, $rfc9[$xa]);
+X    
+X    if ( !( exists $hom1{$rfc8[$xa]} ) )
+X    {
+X     if ( -e $falign )
+X     {
+X      open (FAL, "$falign $seq1 $lib1{$rfc8[$xa]} 3 2>&1 |") || die "Cannot run $falign $seq1 $lib1{$rfc8[$xa]} 3\n";
+X       my @fal1=<FAL>;
+X       chomp(@fal1);
+X      close (FAL);
+X      
+X      my @fal2 = grep(/Sequence identity:/, @fal1);
+X      
+X      while( $fal2[0] =~ /\:/ ) { $fal2[0] =~ s/\:/\ /g; }
+X      while( $fal2[0] =~ /\(/ ) { $fal2[0] =~ s/\(/\ /g; }
+X      while( $fal2[0] =~ /\ \ / ) { $fal2[0] =~ s/\ \ /\ /g; }
+X      
+X      my @fal3 = split(/\ /, $fal2[0]);
+X      
+X      $hom1{$rfc8[$xa]} = $fal3[2];
+X     }
+X     else
+X     {
+X      $hom1{$rfc8[$xa]} = get_identity($seq1, $lib1{$rfc8[$xa]});
+X     }
+X    }
+X    
+X       if ( $rfc10[1] >= $rfc10[0] and $rfc10[1] >= $rfc10[2] )
+X    {
+X     $rfc4{$nrfc4} = $rfc8[$xa].':'.$hom1{$rfc8[$xa]}.':L:'.$rfc10[1].':H:'.$hhp1{$rfc8[$xa]};
+X    }
+X    elsif ( $rfc10[2] >= $rfc10[0] and $rfc10[2] >= $rfc10[1] )
+X    {
+X     $rfc4{$nrfc4} = $rfc8[$xa].':'.$hom1{$rfc8[$xa]}.':L:'.$rfc10[2].':R:'.$rap1{$rfc8[$xa]};
+X    }
+X    else
+X    {
+X     $rfc4{$nrfc4} = $rfc8[$xa].':'.$hom1{$rfc8[$xa]}.':L:'.$rfc10[0].':S:'.$spa1{$rfc8[$xa]};
+X    }
+X    
+X    $rfc5{$rfc8[$xa]} = $nrfc4++;
+X    
+X    printf("%d ", $nrfc4 + $n3);
+X    
+X    last if ( $nrfc4 >= $fcut3 );
+X   }
+X  }
+X  
+X  print "done\n\n";
+X }
+X 
+X if ( $ftop1 )
+X {
+X  my $n4 = -10000;
+X  
+X  for ( my $xa = 0; $xa < $ftop1; $xa++ )
+X  {
+X   $rfc4{$n4++} = $hhp6[$xa] if ( $xa < $nhhp6 );
+X   $rfc4{$n4++} = $rap6[$xa] if ( $xa < $nrap6 );
+X   $rfc4{$n4++} = $spa6[$xa] if ( $xa < $nspa6 );
+X  }
+X }
+X 
+X 
+X # output alignments -----------------------------
+X 
+X if ( $nrfc4 + $n3 )
+X {
+X  my @out1 = ();
+X  
+X  if ( $nrfc4 + $n3 > 1 )
+X  {
+X   print "Writing ".($nrfc4 + $n3)." alignments to $fout1 ... ";
+X  }
+X  else
+X  {
+X   print "Writing ".($nrfc4 + $n3)." alignment to $fout1 ... ";
+X  }
+X  
+X  foreach my $wrfc4 ( sort { $a <=> $b } keys %rfc4 )
+X  {
+X   my @tpl4 = split(/\:/, $rfc4{$wrfc4});
+X   
+X   my $n1 = 0;
+X   my $n2 = 0;
+X   
+X   for ( my $xa = 0; $xa < length($tpl4[7]); $xa++ )
+X   {
+X    if ( substr($tpl4[7], $xa, 1) ne '-' )
+X    {
+X     $n1++;
+X    
+X     $n2++ if ( substr($tpl4[8], $xa, 1) ne '-' );
+X    }
+X   }
+X   
+X   $tpl4[7] .= '*';
+X   $tpl4[8] .= '*';
+X   
+X   # template - sid - high/low - conf - ali coverage - ali length - hhpred/raptor - rank - score
+X   
+X   push(@out1, sprintf(">P1;%s %.3f %s %.2f %.3f %d %s %d %.2f\n", $tpl4[0], $tpl4[1], $tpl4[2], $tpl4[3], $n2/$n1, $n2, $tpl4[4], $tpl4[5], $tpl4[6]));
+X   
+X   push(@out1, sprintf("%s\n", 'sequence:::::::::'));
+X   
+X   for ( my $xa = 0; $xa < length($tpl4[7]); $xa += 70 )
+X   {
+X    my $tt15 = 70; $tt15 = length($tpl4[7]) - $xa if ( $tt15 > length($tpl4[7]) - $xa );
+X   
+X    push(@out1, sprintf("%s\n", substr($tpl4[7], $xa, $tt15)));
+X   }
+X   
+X   push(@out1, sprintf("%s\n", 'structureX:::::::::'));
+X   
+X   for ( my $xa = 0; $xa < length($tpl4[8]); $xa += 70 )
+X   {
+X    my $tt15 = 70; $tt15 = length($tpl4[8]) - $xa if ( $tt15 > length($tpl4[8]) - $xa );
+X   
+X    push(@out1, sprintf("%s\n", substr($tpl4[8], $xa, $tt15)));
+X   }
+X   
+X   push(@out1, "\n");
+X  }
+X  
+X  write_file($fout1, @out1);
+X  
+X  print "done\n\n";
+X }
+X else
+X {
+X  print "No structure templates have been identified\n\n";
+X }
+X 
+X 
+X # ligand-bound templates ------------------------
+X 
+X if ( length($fout2) )
+X {
+X  print "Scoring ligand-bound templates ($nran2) .";
+X  
+X  my @rfc11 = ();
+X  my @rfc14 = ();
+X  
+X  foreach my $wran2 ( sort { $ran2{$a} <=> $ran2{$b} } keys %ran2 )
+X  {
+X   my @hhp7 = split(/\:/, $hhp1{$wran2});
+X   my @rap7 = split(/\:/, $rap1{$wran2});
+X   my @spa7 = split(/\:/, $spa1{$wran2});
+X   
+X   push(@rfc11, sprintf("%f %f %f %f %f %f\n", log($hhp7[0]), $hhp7[1], log($rap7[0]), $rap7[1], log($spa7[0]), $spa7[1]));
+X   
+X   push(@rfc14, $wran2);
+X  }
+X  
+X  write_file($tmpfil3, @rfc11);
+X  
+X  open (RFC, "$bindir/ethread_rfc_lig.py $tmpfil3 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_lig.py $tmpfil3\n";
+X   my @rfc12=<RFC>;
+X   chomp(@rfc12);
+X  close (RFC);
+X  
+X  print ".";
+X  
+X  open (RFC, "$bindir/ethread_rfc_pkt.py $tmpfil3 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_pkt.py $tmpfil3\n";
+X   my @rfc13=<RFC>;
+X   chomp(@rfc13);
+X  close (RFC);
+X  
+X  print ".";
+X  
+X  unlink($tmpfil3) if ( -e $tmpfil3 );
+X  
+X  @rfc12 = grep(!/Parallel/, @rfc12);
+X  @rfc12 = grep(!/jobs/, @rfc12);
+X  
+X  @rfc13 = grep(!/Parallel/, @rfc13);
+X  @rfc13 = grep(!/jobs/, @rfc13);
+X  
+X  my $nrfc12 = @rfc12;
+X  my $nrfc13 = @rfc13;
+X  
+X  my @out2 = ();
+X  
+X  my $n5 = 0;
+X  my $n6 = 0;
+X  
+X  for ( my $xa = 0; $xa < $nrfc12; $xa++ )
+X  {
+X   while ( $rfc12[$xa] =~ /\[/ ) { $rfc12[$xa] =~ s/\[//g; }
+X   while ( $rfc12[$xa] =~ /\]/ ) { $rfc12[$xa] =~ s/\]//g; }
+X   while ( $rfc12[$xa] =~ /\t/ ) { $rfc12[$xa] =~ s/\t/\ /g; }
+X   while ( $rfc12[$xa] =~ /\ \ / ) { $rfc12[$xa] =~ s/\ \ /\ /g; }
+X   
+X   substr($rfc12[$xa],  0, 1) = '' if ( substr($rfc12[$xa],  0, 1) eq ' ' );
+X   substr($rfc12[$xa], -1, 1) = '' if ( substr($rfc12[$xa], -1, 1) eq ' ' );
+X   
+X   while ( $rfc13[$xa] =~ /\[/ ) { $rfc13[$xa] =~ s/\[//g; }
+X   while ( $rfc13[$xa] =~ /\]/ ) { $rfc13[$xa] =~ s/\]//g; }
+X   while ( $rfc13[$xa] =~ /\t/ ) { $rfc13[$xa] =~ s/\t/\ /g; }
+X   while ( $rfc13[$xa] =~ /\ \ / ) { $rfc13[$xa] =~ s/\ \ /\ /g; }
+X   
+X   substr($rfc13[$xa],  0, 1) = '' if ( substr($rfc13[$xa],  0, 1) eq ' ' );
+X   substr($rfc13[$xa], -1, 1) = '' if ( substr($rfc13[$xa], -1, 1) eq ' ' );
+X   
+X   my @rfc15 = split(/\ /, $rfc12[$xa]);
+X   my @rfc16 = split(/\ /, $rfc13[$xa]);
+X   
+X   push(@out2, sprintf("%s %.2f %.2f\n", $rfc14[$xa], $rfc15[1], $rfc16[1]));
+X   
+X   $n5++ if ( $rfc15[1] >= $fcut4 );
+X   $n6++ if ( $rfc16[1] >= $fcut5 );
+X  }
+X  
+X  my $nout2 = @out2;
+X  
+X  print " $n5/$n6 done\n\n";
+X  
+X  
+X  # output for efindsite -------------------------
+X  
+X  if ( $nout2 )
+X  {
+X   if ( $nout2 > 1 )
+X   {
+X    print "Writing ".($nout2)." templates to $fout2 ... ";
+X   }
+X   else
+X   {
+X    print "Writing ".($nout2)." template to $fout2 ... ";
+X   }
+X   
+X   write_file($fout2, @out2);
+X   
+X   print "done\n\n";
+X  }
+X  else
+X  {
+X   print "No ligand-bound templates have been identified\n\n";
+X  }
+X }
+X 
+X 
+X # dimer templates -------------------------------
+X 
+X if ( length($fout3) or length($fout4) )
+X {
+X  if ( $fopt1 == 1 )
+X  {
+X   print "Scoring homo-dimer templates ($nran2) .";
+X  }
+X  else
+X  {
+X   print "Scoring hetero-dimer templates ($nran2) .";
+X  }
+X  
+X  my @rfc17 = ();
+X  my @rfc18 = ();
+X  
+X  foreach my $wran2 ( sort { $ran2{$a} <=> $ran2{$b} } keys %ran2 )
+X  {
+X   my @hhp7 = split(/\:/, $hhp1{$wran2});
+X   my @rap7 = split(/\:/, $rap1{$wran2});
+X   my @spa7 = split(/\:/, $spa1{$wran2});
+X   
+X   if ( $fopt1 == 1 )
+X   {
+X    push(@rfc17, sprintf("%f %f %f\n", ( $hhp7[1] - $hh_mean1 ) / $hh_std1, ( $rap7[1] - $rx_mean1 ) / $rx_std1, ( $spa7[1] - $sp_mean1 ) / $sp_std1));
+X   }
+X   else
+X   {
+X    push(@rfc17, sprintf("%f %f %f\n", ( $hhp7[1] - $hh_mean2 ) / $hh_std2, ( $rap7[1] - $rx_mean2 ) / $rx_std2, ( $spa7[1] - $sp_mean2 ) / $sp_std2));
+X   }
+X   
+X   push(@rfc18, $wran2);
+X  }
+X  
+X  write_file($tmpfil4, @rfc17);
+X  
+X  my @rfc19 = ();
+X  my @rfc20 = ();
+X  
+X  if ( $fopt1 == 1 )
+X  {
+X   open (RFC, "$bindir/ethread_rfc_homo_mcc.py $tmpfil4 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_homo_mcc.py $tmpfil4\n";
+X    @rfc19=<RFC>;
+X    chomp(@rfc19);
+X   close (RFC);
+X   
+X   print ".";
+X   
+X   open (RFC, "$bindir/ethread_rfc_homo_isc.py $tmpfil4 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_homo_isc.py $tmpfil4\n";
+X    @rfc20=<RFC>;
+X    chomp(@rfc20);
+X   close (RFC);
+X   
+X   print ".";
+X  }
+X  else
+X  {
+X   open (RFC, "$bindir/ethread_rfc_hete_mcc.py $tmpfil4 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_hete_mcc.py $tmpfil4\n";
+X    @rfc19=<RFC>;
+X    chomp(@rfc19);
+X   close (RFC);
+X   
+X   print ".";
+X   
+X   open (RFC, "$bindir/ethread_rfc_hete_isc.py $tmpfil4 2>/dev/null |") || die "Cannot execute $bindir/ethread_rfc_hete_isc.py $tmpfil4\n";
+X    @rfc20=<RFC>;
+X    chomp(@rfc20);
+X   close (RFC);
+X   
+X   print ".";
+X  }
+X  
+X  unlink($tmpfil4) if ( -e $tmpfil4 );
+X  
+X  @rfc19 = grep(!/Parallel/, @rfc19);
+X  @rfc19 = grep(!/jobs/, @rfc19);
+X  
+X  @rfc20 = grep(!/Parallel/, @rfc20);
+X  @rfc20 = grep(!/jobs/, @rfc20);
+X  
+X  my $nrfc19 = @rfc19;
+X  my $nrfc20 = @rfc20;
+X  
+X  my @out3 = ();
+X  
+X  my $n7  = 0;
+X  my $n8  = 0;
+X  
+X  for ( my $xa = 0; $xa < $nrfc19; $xa++ )
+X  {
+X   while ( $rfc19[$xa] =~ /\[/ ) { $rfc19[$xa] =~ s/\[//g; }
+X   while ( $rfc19[$xa] =~ /\]/ ) { $rfc19[$xa] =~ s/\]//g; }
+X   while ( $rfc19[$xa] =~ /\t/ ) { $rfc19[$xa] =~ s/\t/\ /g; }
+X   while ( $rfc19[$xa] =~ /\ \ / ) { $rfc19[$xa] =~ s/\ \ /\ /g; }
+X   
+X   substr($rfc19[$xa],  0, 1) = '' if ( substr($rfc19[$xa],  0, 1) eq ' ' );
+X   substr($rfc19[$xa], -1, 1) = '' if ( substr($rfc19[$xa], -1, 1) eq ' ' );
+X   
+X   while ( $rfc20[$xa] =~ /\[/ ) { $rfc20[$xa] =~ s/\[//g; }
+X   while ( $rfc20[$xa] =~ /\]/ ) { $rfc20[$xa] =~ s/\]//g; }
+X   while ( $rfc20[$xa] =~ /\t/ ) { $rfc20[$xa] =~ s/\t/\ /g; }
+X   while ( $rfc20[$xa] =~ /\ \ / ) { $rfc20[$xa] =~ s/\ \ /\ /g; }
+X   
+X   substr($rfc20[$xa],  0, 1) = '' if ( substr($rfc20[$xa],  0, 1) eq ' ' );
+X   substr($rfc20[$xa], -1, 1) = '' if ( substr($rfc20[$xa], -1, 1) eq ' ' );
+X   
+X   my @rfc21 = split(/\ /, $rfc19[$xa]);
+X   my @rfc22 = split(/\ /, $rfc20[$xa]);
+X   
+X   push(@out3, sprintf("%s %.2f %.2f\n", $rfc18[$xa], $rfc21[1], $rfc22[1]));
+X   
+X   $n7++  if ( $rfc21[1] >= $fcut6 );
+X   $n8++  if ( $rfc22[1] >= $fcut7 );
+X  }
+X  
+X  my $nout3 = @out3;
+X  
+X  print " $n7/$n8 done\n\n";
+X  
+X  
+X  # output for efindsiteppi ----------------------
+X  
+X  if ( $nout3 )
+X  {
+X   my $tout = '';
+X   
+X   if ( $fopt1 == 1 )
+X   {
+X    $tout = $fout3;
+X   }
+X   else
+X   {
+X    $tout = $fout4;
+X   }
+X   
+X   if ( $nout3 > 1 )
+X   {
+X    print "Writing ".($nout3)." templates to $tout ... ";
+X   }
+X   else
+X   {
+X    print "Writing ".($nout3)." template to $tout ... ";
+X   }
+X   
+X   write_file($tout, @out3);
+X   
+X   print "done\n\n";
+X  }
+X  else
+X  {
+X   if ( $fopt1 == 1 )
+X   {
+X    print "No homo-dimer templates have been identified\n\n";
+X   }
+X   else
+X   {
+X    print "No hetero-dimer templates have been identified\n\n";
+X   }
+X  }
+X }
+X 
+X 
+X my $bt1 = Benchmark->new;
+X 
+X printf("------------------------------------------------------------\n");
+X printf("Walltime: %s\n", timestr(timediff($bt1, $bt0)));
+X printf("------------------------------------------------------------\n");
+X 
+X exit(0);
+X
+X__DATA__
+X   A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V  B  Z  X
+XA  5 -2 -1 -2 -1 -1 -1  0 -2 -1 -2 -1 -1 -3 -1  1  0 -3 -2  0 -2 -1 -1
+XR -2  7 -1 -2 -4  1  0 -3  0 -4 -3  3 -2 -3 -3 -1 -1 -3 -1 -3 -1  0 -1
+XN -1 -1  7  2 -2  0  0  0  1 -3 -4  0 -2 -4 -2  1  0 -4 -2 -3  4  0 -1
+XD -2 -2  2  8 -4  0  2 -1 -1 -4 -4 -1 -4 -5 -1  0 -1 -5 -3 -4  5  1 -1
+XC -1 -4 -2 -4 13 -3 -3 -3 -3 -2 -2 -3 -2 -2 -4 -1 -1 -5 -3 -1 -3 -3 -2
+XQ -1  1  0  0 -3  7  2 -2  1 -3 -2  2  0 -4 -1  0 -1 -1 -1 -3  0  4 -1
+XE -1  0  0  2 -3  2  6 -3  0 -4 -3  1 -2 -3 -1 -1 -1 -3 -2 -3  1  5 -1
+XG  0 -3  0 -1 -3 -2 -3  8 -2 -4 -4 -2 -3 -4 -2  0 -2 -3 -3 -4 -1 -2 -2
+XH -2  0  1 -1 -3  1  0 -2 10 -4 -3  0 -1 -1 -2 -1 -2 -3  2 -4  0  0 -1
+XI -1 -4 -3 -4 -2 -3 -4 -4 -4  5  2 -3  2  0 -3 -3 -1 -3 -1  4 -4 -3 -1
+XL -2 -3 -4 -4 -2 -2 -3 -4 -3  2  5 -3  3  1 -4 -3 -1 -2 -1  1 -4 -3 -1
+XK -1  3  0 -1 -3  2  1 -2  0 -3 -3  6 -2 -4 -1  0 -1 -3 -2 -3  0  1 -1
+XM -1 -2 -2 -4 -2  0 -2 -3 -1  2  3 -2  7  0 -3 -2 -1 -1  0  1 -3 -1 -1
+XF -3 -3 -4 -5 -2 -4 -3 -4 -1  0  1 -4  0  8 -4 -3 -2  1  4 -1 -4 -4 -2
+XP -1 -3 -2 -1 -4 -1 -1 -2 -2 -3 -4 -1 -3 -4 10 -1 -1 -4 -3 -3 -2 -1 -2
+XS  1 -1  1  0 -1  0 -1  0 -1 -3 -3  0 -2 -3 -1  5  2 -4 -2 -2  0  0 -1
+XT  0 -1  0 -1 -1 -1 -1 -2 -2 -1 -1 -1 -1 -2 -1  2  5 -3 -2  0  0 -1  0
+XW -3 -3 -4 -5 -5 -1 -3 -3 -3 -3 -2 -3 -1  1 -4 -4 -3 15  2 -3 -5 -2 -3
+XY -2 -1 -2 -3 -3 -1 -2 -3  2 -1 -1 -2  0  4 -3 -2 -2  2  8 -1 -3 -2 -1
+XV  0 -3 -3 -4 -1 -3 -3 -4 -4  4  1 -3  1 -1 -3 -2  0 -3 -1  5 -4 -3 -1
+XB -2 -1  4  5 -3  0  1 -1  0 -4 -4  0 -3 -4 -2  0  0 -5 -3 -4  5  2 -1
+XZ -1  0  0  1 -3  4  5 -2  0 -3 -3  1 -1 -4 -1  0 -1 -2 -2 -3  2  5 -1
+XX -1 -1 -1 -1 -2 -1 -1 -2 -1 -1 -1 -1 -1 -2 -2 -1  0 -3 -1 -1 -1 -1 -1
+END-of-ethread
+exit
+

@@ -1,0 +1,464 @@
+# This is a shell archive.  Save it in a file, remove anything before
+# this line, and then unpack it by entering "sh file".  Note, it may
+# create directories; files and directories will be owned by you and
+# have default permissions.
+#
+# This archive contains:
+#
+#	ethread_extract
+#
+echo x - ethread_extract
+sed 's/^X//' >ethread_extract << 'END-of-ethread_extract'
+X#!/home/michal/local/bin/perl -w
+X
+X#===============================================================================
+X#           _______ __                        __ 
+X#   .-----.|_     _|  |--.----.-----.---.-.--|  |
+X#   |  -__|  |   | |     |   _|  -__|  _  |  _  |
+X#   |_____|  |___| |__|__|__| |_____|___._|_____|
+X#                                                  
+X#   eThread - protein structure modeling by meta-threading
+X#
+X#   This software is distributed WITHOUT ANY WARRANTY (but with best wishes)
+X#
+X#   Report bugs and issues to michal@brylinski.org
+X#
+X#   Computational Systems Biology Group
+X#   Department of Biological Sciences
+X#   Center for Computation & Technology
+X#   Louisiana State University
+X#   407 Choppin Hall, Baton Rouge, LA 70803, USA
+X#
+X#   http://www.brylinski.org
+X#
+X#===============================================================================
+X
+X use strict;
+X use File::Slurp;
+X use Benchmark;
+X use Math::MatrixReal;
+X use Math::Trig;
+X 
+X local $| = 1;
+X 
+X print "------------------------------------------------------------\n";
+X print "                      ethread_extract\n";
+X print "                        version 1.0\n";
+X print "          extracts model from a concatenated file\n\n";
+X print "       report bugs and issues to michal\@brylinski.org\n";
+X print "------------------------------------------------------------\n\n";
+X 
+X if ($#ARGV < 3)
+X {
+X  print "econtact -i <eRank models in PDB format>\n";
+X  print "         -n <model number, default 1>\n";
+X  print "         -o <output model in PDB format>\n";
+X  print "         -a <align model onto x, y, z: 0/1, default 0>\n";
+X  die "\n";
+X }
+X 
+X my $fmod1 = '';
+X my $fnum1 = 1;
+X my $fout1 = '';
+X my $fali1 = 0;
+X 
+X for ( my $i = 0; $i <= $#ARGV; $i++ )
+X {
+X  $fmod1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-i' );
+X  $fnum1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-n' );
+X  $fout1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-o' );
+X  $fali1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-a' );
+X }
+X 
+X die "Provide output filename\n" if ( !length($fout1) );
+X die "Provide eRank models in PDB format\n" if ( !( -e $fmod1 ) or !length($fmod1) );
+X 
+X my $bt0 = Benchmark->new;
+X 
+X print "Extracting model $fnum1 ... ";
+X 
+X my @mod01 = read_file($fmod1); chomp(@mod01);
+X 
+X push(@mod01, 'MODEL ');
+X 
+X my @mod02 = ();
+X my @mod03 = ();
+X 
+X foreach my $wmod01 (@mod01)
+X {
+X  if ( $wmod01 =~ /MODEL / )
+X  {
+X   if ( @mod02 )
+X   {
+X    my @mod04 = grep(/MODEL /, @mod02);
+X    
+X    my @mod05 = split(/\ /, $mod04[0]);
+X    
+X    my $mod06 = pop(@mod05);
+X    
+X    if ( $mod06 == $fnum1 )
+X    {
+X     @mod03 = ();
+X     
+X     foreach my $wmod02 (@mod02)
+X     {
+X      push(@mod03, "$wmod02\n");
+X     }
+X    }
+X   }
+X   
+X   @mod02 = ();
+X  }
+X  
+X  push(@mod02, $wmod01);
+X  
+X  last if ( @mod03 );
+X }
+X 
+X if ( @mod03 )
+X {
+X  print "done\n";
+X }
+X else
+X {
+X  print "failed\n";
+X }
+X 
+X if ( $fali1 )
+X {
+X  print "\nAligning model onto x,y,z ... ";
+X  
+X  chomp(@mod03);
+X  
+X  my @mod07 = @mod03;
+X  
+X  @mod03 = grep(/MODEL|REMARK/, @mod03);
+X  
+X  @mod07 = grep(/ATOM/, @mod07);
+X  
+X  my $mass1 = 0.0;
+X  
+X  foreach my $wmod07 (@mod07)
+X  {
+X   if ( length($wmod07) > 52 )
+X   {
+X    if (substr($wmod07, 0, 6) eq 'ATOM  ' and substr($wmod07, 13, 1) ne 'H' )
+X    {
+X     my $at = substr($wmod07, 13, 1);
+X     my $px = substr($wmod07, 30, 8); $px *= 1.0;
+X     my $py = substr($wmod07, 38, 8); $py *= 1.0;
+X     my $pz = substr($wmod07, 46, 8); $pz *= 1.0;
+X     
+X        if ( $at eq 'C' ) { $mass1 += 12.0107; }
+X     elsif ( $at eq 'N' ) { $mass1 += 14.0067; }
+X     elsif ( $at eq 'O' ) { $mass1 += 15.9994; }
+X     elsif ( $at eq 'S' ) { $mass1 += 32.0650; }
+X    }
+X   }
+X  }
+X  
+X  my $cx = 0.0;
+X  my $cy = 0.0;
+X  my $cz = 0.0;
+X  
+X  foreach my $wmod07 (@mod07)
+X  {
+X   if ( length($wmod07) > 52 )
+X   {
+X    if (substr($wmod07, 0, 6) eq 'ATOM  ' and substr($wmod07, 13, 1) ne 'H' )
+X    {
+X     my $at = substr($wmod07, 13, 1);
+X     my $px = substr($wmod07, 30, 8); $px *= 1.0;
+X     my $py = substr($wmod07, 38, 8); $py *= 1.0;
+X     my $pz = substr($wmod07, 46, 8); $pz *= 1.0;
+X     
+X     my $mass2 = 0.0;
+X     
+X        if ( $at eq 'C' ) { $mass2 = 12.0107; }
+X     elsif ( $at eq 'N' ) { $mass2 = 14.0067; }
+X     elsif ( $at eq 'O' ) { $mass2 = 15.9994; }
+X     elsif ( $at eq 'S' ) { $mass2 = 32.0650; }
+X     
+X     $cx += $px * ( $mass2 / $mass1 );
+X     $cy += $py * ( $mass2 / $mass1 );
+X     $cz += $pz * ( $mass2 / $mass1 );
+X    }
+X   }
+X  }
+X  
+X  my @xyz = ();
+X  my $nxyz = 0;
+X  
+X  foreach my $wmod07 (@mod07)
+X  {
+X   if ( length($wmod07) > 52 )
+X   {
+X    if (substr($wmod07, 0, 6) eq 'ATOM  ' and substr($wmod07, 13, 1) ne 'H' )
+X    {
+X     my $p1 = substr($wmod07,  0, 26);
+X     my $pa = substr($wmod07, 13,  1);
+X     my $px = substr($wmod07, 30,  8) - $cx;
+X     my $py = substr($wmod07, 38,  8) - $cy;
+X     my $pz = substr($wmod07, 46,  8) - $cz;
+X     
+X     $xyz[$nxyz][0] = $px;
+X     $xyz[$nxyz][1] = $py;
+X     $xyz[$nxyz][2] = $pz;
+X     $xyz[$nxyz][3] = $pa;
+X     $xyz[$nxyz][4] = $p1;
+X     $nxyz++
+X    }
+X   }
+X  }
+X  
+X  my $Ixx = 0.0;
+X  my $Ixy = 0.0;
+X  my $Ixz = 0.0;
+X  my $Iyx = 0.0;
+X  my $Iyy = 0.0;
+X  my $Iyz = 0.0;
+X  my $Izx = 0.0;
+X  my $Izy = 0.0;
+X  my $Izz = 0.0;
+X  
+X  for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X  {
+X   my $mass3 = 0.0;
+X   
+X      if ( $xyz[$xa][3] eq 'C' ) { $mass3 = 12.0107; }
+X   elsif ( $xyz[$xa][3] eq 'N' ) { $mass3 = 14.0067; }
+X   elsif ( $xyz[$xa][3] eq 'O' ) { $mass3 = 15.9994; }
+X   elsif ( $xyz[$xa][3] eq 'S' ) { $mass3 = 32.0650; }
+X   
+X   $Ixx += $mass3 * ( ( $xyz[$xa][1]**2.0 ) + ( $xyz[$xa][2]**2.0 ) );
+X   $Iyy += $mass3 * ( ( $xyz[$xa][0]**2.0 ) + ( $xyz[$xa][2]**2.0 ) );
+X   $Izz += $mass3 * ( ( $xyz[$xa][0]**2.0 ) + ( $xyz[$xa][1]**2.0 ) );
+X   $Ixy -= $mass3 * $xyz[$xa][0] * $xyz[$xa][1];
+X   $Ixz -= $mass3 * $xyz[$xa][0] * $xyz[$xa][2];
+X   $Iyz -= $mass3 * $xyz[$xa][1] * $xyz[$xa][2];
+X   $Iyx -= $mass3 * $xyz[$xa][0] * $xyz[$xa][1];
+X   $Izx -= $mass3 * $xyz[$xa][0] * $xyz[$xa][2];
+X   $Izy -= $mass3 * $xyz[$xa][1] * $xyz[$xa][2];
+X  }
+X  
+X  my $matrix0 = Math::MatrixReal->new_from_rows( [ [$Ixx, $Ixy, $Ixz], [$Iyx, $Iyy, $Iyz], [$Izx, $Izy, $Izz] ] );
+X  
+X  ( my $l0, my $V0) = $matrix0->sym_diagonalize();
+X  
+X  my $I1 = $l0->element( 1, 1 );
+X  my $I2 = $l0->element( 2, 1 );
+X  my $I3 = $l0->element( 3, 1 );
+X  
+X  my $e1 = 0;
+X  my $e2 = 0;
+X  my $e3 = 0;
+X  
+X     if ( $I1 > $I2 and $I2 > $I3 ) { $e1 = 1; $e2 = 2; $e3 = 3; }
+X  elsif ( $I1 > $I3 and $I3 > $I2 ) { $e1 = 1; $e2 = 3; $e3 = 2; }
+X  elsif ( $I2 > $I1 and $I1 > $I3 ) { $e1 = 2; $e2 = 1; $e3 = 3; }
+X  elsif ( $I2 > $I3 and $I3 > $I1 ) { $e1 = 2; $e2 = 3; $e3 = 1; }
+X  elsif ( $I3 > $I1 and $I1 > $I2 ) { $e1 = 3; $e2 = 1; $e3 = 2; }
+X  elsif ( $I3 > $I2 and $I2 > $I1 ) { $e1 = 3; $e2 = 2; $e3 = 1; }
+X  else { die "Cannot pick up the largest I: $I1, $I2, $I3\n"; }
+X  
+X  my @lax_1 = ();
+X  my @lax_2 = ();
+X  my @lax_3 = ();
+X  
+X  my $h1 = $V0->element( 1, $e1 ); $lax_1[0] = $h1;
+X  my $h2 = $V0->element( 2, $e1 ); $lax_1[1] = $h2;
+X  my $h3 = $V0->element( 3, $e1 ); $lax_1[2] = $h3;
+X  
+X  my $matrix1 = Math::MatrixReal->new_from_cols( [[ $h1, $h2, $h3 ]] );
+X  
+X     $h1 = $V0->element( 1, $e2 ); $lax_2[0] = $h1;
+X     $h2 = $V0->element( 2, $e2 ); $lax_2[1] = $h2;
+X     $h3 = $V0->element( 3, $e2 ); $lax_2[2] = $h3;
+X  
+X  my $matrix2 = Math::MatrixReal->new_from_cols( [[ $h1, $h2, $h3 ]] );
+X  
+X     $h1 = $V0->element( 1, $e3 ); $lax_3[0] = $h1;
+X     $h2 = $V0->element( 2, $e3 ); $lax_3[1] = $h2;
+X     $h3 = $V0->element( 3, $e3 ); $lax_3[2] = $h3;
+X  
+X  my $matrix3 = Math::MatrixReal->new_from_cols( [[ $h1, $h2, $h3 ]] );
+X  
+X  my $wp1_1 = 0.0;
+X  my $wp1_2 = 0.0;
+X  my $wp1_3 = 0.0;
+X  my $wp2   = 0.0;
+X  
+X  for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X  {
+X   my $mass3 = 0.0;
+X   
+X      if ( $xyz[$xa][3] eq 'C' ) { $mass3 = 12.0107; }
+X   elsif ( $xyz[$xa][3] eq 'N' ) { $mass3 = 14.0067; }
+X   elsif ( $xyz[$xa][3] eq 'O' ) { $mass3 = 15.9994; }
+X   elsif ( $xyz[$xa][3] eq 'S' ) { $mass3 = 32.0650; }
+X   
+X   $wp1_1 += $mass3 * ( $xyz[$xa][0] * $lax_1[0] + $xyz[$xa][1] * $lax_1[1] + $xyz[$xa][2] * $lax_1[2] )**2; 
+X   $wp1_2 += $mass3 * ( $xyz[$xa][0] * $lax_2[0] + $xyz[$xa][1] * $lax_2[1] + $xyz[$xa][2] * $lax_2[2] )**2; 
+X   $wp1_3 += $mass3 * ( $xyz[$xa][0] * $lax_3[0] + $xyz[$xa][1] * $lax_3[1] + $xyz[$xa][2] * $lax_3[2] )**2; 
+X   
+X   $wp2  += $mass3;
+X  }
+X  
+X  my @Vk_1 = ();
+X  my @Vk_2 = ();
+X  my @Vk_3 = ();
+X  
+X  $Vk_1[0] = $lax_1[0] * sqrt( $wp1_1 / $wp2 );
+X  $Vk_1[1] = $lax_1[1] * sqrt( $wp1_1 / $wp2 );
+X  $Vk_1[2] = $lax_1[2] * sqrt( $wp1_1 / $wp2 );
+X  
+X  $Vk_2[0] = $lax_2[0] * sqrt( $wp1_2 / $wp2 );
+X  $Vk_2[1] = $lax_2[1] * sqrt( $wp1_2 / $wp2 );
+X  $Vk_2[2] = $lax_2[2] * sqrt( $wp1_2 / $wp2 );
+X  
+X  $Vk_3[0] = $lax_3[0] * sqrt( $wp1_3 / $wp2 );
+X  $Vk_3[1] = $lax_3[1] * sqrt( $wp1_3 / $wp2 );
+X  $Vk_3[2] = $lax_3[2] * sqrt( $wp1_3 / $wp2 );
+X  
+X  my $r1 = sqrt($Vk_1[0]**2 + $Vk_1[1]**2 + $Vk_1[2]**2);
+X  my $r2 = sqrt($Vk_2[0]**2 + $Vk_2[1]**2 + $Vk_2[2]**2);
+X  my $r3 = sqrt($Vk_3[0]**2 + $Vk_3[1]**2 + $Vk_3[2]**2);
+X 
+X  my @pa1 = ();
+X  my @pa2 = ();
+X  
+X  $pa1[0][0] = 0.0;
+X  $pa1[0][1] = 0.0;
+X  $pa1[0][2] = 0.0;
+X  
+X  $pa1[1][0] = 0.0;
+X  $pa1[1][1] = 0.0;
+X  $pa1[1][2] = $r1;
+X  
+X  $pa1[2][0] = 0.0;
+X  $pa1[2][1] = $r2;
+X  $pa1[2][2] = 0.0;
+X  
+X  $pa1[3][0] = $r3;
+X  $pa1[3][1] = 0.0;
+X  $pa1[3][2] = 0.0;
+X  
+X  $pa2[0][0] = 0.0;
+X  $pa2[0][1] = 0.0;
+X  $pa2[0][2] = 0.0;
+X  
+X  $pa2[1][0] = $Vk_1[0];
+X  $pa2[1][1] = $Vk_1[1];
+X  $pa2[1][2] = $Vk_1[2];
+X  
+X  $pa2[2][0] = $Vk_2[0];
+X  $pa2[2][1] = $Vk_2[1];
+X  $pa2[2][2] = $Vk_2[2];
+X  
+X  $pa2[3][0] = $Vk_3[0];
+X  $pa2[3][1] = $Vk_3[1];
+X  $pa2[3][2] = $Vk_3[2];
+X  
+X  my $cosa1 = 1.0;
+X  my $sina1 = 0.0;
+X  
+X  $cosa1 = $pa2[3][0] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) != 0.0);
+X  $sina1 = $pa2[3][1] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) != 0.0);
+X  
+X  for ( my $xa = 1; $xa < 4; $xa++ )
+X  {
+X   my $xs = $pa2[$xa][0];
+X   my $ys = $pa2[$xa][1];
+X   
+X   $pa2[$xa][0] = $xs*$cosa1 + $ys*$sina1;
+X   $pa2[$xa][1] = $ys*$cosa1 - $xs*$sina1;
+X  }
+X  
+X  for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X  {
+X   my $xs = $xyz[$xa][0];
+X   my $ys = $xyz[$xa][1];
+X   
+X   $xyz[$xa][0] = $xs*$cosa1 + $ys*$sina1;
+X   $xyz[$xa][1] = $ys*$cosa1 - $xs*$sina1;
+X  }
+X  
+X  my $cosa2 = 1.0;
+X  my $sina2 = 0.0;
+X  
+X  $cosa2 = $pa2[3][0] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) != 0.0);
+X  $sina2 = $pa2[3][2] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) != 0.0);
+X  
+X  for ( my $xa = 1; $xa < 4; $xa++ )
+X  {
+X   my $xs = $pa2[$xa][0];
+X   my $zs = $pa2[$xa][2];
+X   
+X   $pa2[$xa][0] = $xs*$cosa2 + $zs*$sina2;
+X   $pa2[$xa][2] = $zs*$cosa2 - $xs*$sina2;
+X  }
+X  
+X  for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X  {
+X   my $xs = $xyz[$xa][0];
+X   my $zs = $xyz[$xa][2];
+X   
+X   $xyz[$xa][0] = $xs*$cosa2 + $zs*$sina2;
+X   $xyz[$xa][2] = $zs*$cosa2 - $xs*$sina2;
+X  }
+X  
+X  my $cosa3 = 1.0;
+X  my $sina3 = 0.0;
+X  
+X  $cosa3 = $pa2[2][1] / sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) if ( sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) != 0.0);
+X  $sina3 = $pa2[2][2] / sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) if ( sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) != 0.0);
+X  
+X  for ( my $xa = 1; $xa < 4; $xa++ )
+X  {
+X   my $ys = $pa2[$xa][1];
+X   my $zs = $pa2[$xa][2];
+X   
+X   $pa2[$xa][1] = $ys*$cosa3 + $zs*$sina3;
+X   $pa2[$xa][2] = $zs*$cosa3 - $ys*$sina3;
+X  }
+X  
+X  for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X  {
+X   my $ys = $xyz[$xa][1];
+X   my $zs = $xyz[$xa][2];
+X   
+X   $xyz[$xa][1] = $ys*$cosa3 + $zs*$sina3;
+X   $xyz[$xa][2] = $zs*$cosa3 - $ys*$sina3;
+X  }
+X  
+X  push(@mod03, sprintf ("REMARK MASS-WEIGHTED AXES: %8.3f%8.3f%8.3f", $r3, $r2, $r1));
+X  
+X  for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X  {
+X   substr($xyz[$xa][4], 21, 1) = ' ' if ( substr($xyz[$xa][4], 21, 1) ne ' ' );
+X   
+X   push(@mod03, sprintf ("%26s%12.3f%8.3f%8.3f", $xyz[$xa][4], $xyz[$xa][0], $xyz[$xa][1], $xyz[$xa][2] ));
+X  }
+X 
+X  push(@mod03, 'TER');
+X  
+X  foreach my $wmod03 (@mod03)
+X  {
+X   $wmod03 .= "\n";
+X  }
+X  
+X  print "done\n";
+X }
+X 
+X write_file($fout1, @mod03);
+X 
+X my $bt1 = Benchmark->new;
+X 
+X printf("\n------------------------------------------------------------\n");
+X printf("Walltime: %s\n", timestr(timediff($bt1, $bt0)));
+X printf("------------------------------------------------------------\n");
+X 
+X exit(0);
+END-of-ethread_extract
+exit
+
