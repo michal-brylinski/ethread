@@ -21,7 +21,7 @@
 #===============================================================================
 
 
-EXE = ethread ethread_extract ethread_model ethread_rank ethread_rfc_h.py ethread_rfc_l.py ethread_rfc_lig.py ethread_rfc_pkt.py ethread_rfc_hete_isc.py ethread_rfc_hete_mcc.py ethread_rfc_homo_isc.py ethread_rfc_homo_mcc.py
+EXE = ethread ethread_extract ethread_model ethread_model_parallel ethread_rank ethread_prune ethread_rfc_h.py ethread_rfc_l.py ethread_rfc_lig.py ethread_rfc_pkt.py ethread_rfc_hete_isc.py ethread_rfc_hete_mcc.py ethread_rfc_homo_isc.py ethread_rfc_homo_mcc.py
 
 SH = sh
 
@@ -62,10 +62,20 @@ ethread_model:
 	@chmod +x ethread_model
 	@mv ethread_model ../bin/
 
+ethread_model_parallel:
+	$(SH) ethread_model_parallel.shar
+	@chmod +x ethread_model_parallel
+	@mv ethread_model_parallel ../bin/
+
 ethread_rank:
 	$(SH) ethread_rank.shar
 	@chmod +x ethread_rank
 	@mv ethread_rank ../bin/
+
+ethread_prune:
+	$(SH) ethread_prune.shar
+	@chmod +x ethread_prune
+	@mv ethread_prune ../bin/
 
 ethread_rfc_h.py:
 	$(SH) ethread_rfc_h.py.shar
