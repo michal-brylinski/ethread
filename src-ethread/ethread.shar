@@ -9,7 +9,7 @@
 #
 echo x - ethread
 sed 's/^X//' >ethread << 'END-of-ethread'
-X#!/home/michal/local/bin/perl -w
+X#!/usr/bin/perl -w
 X
 X#===============================================================================
 X#           _______ __                        __ 

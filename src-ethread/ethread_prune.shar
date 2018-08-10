@@ -1,0 +1,291 @@
+# This is a shell archive.  Save it in a file, remove anything before
+# this line, and then unpack it by entering "sh file".  Note, it may
+# create directories; files and directories will be owned by you and
+# have default permissions.
+#
+# This archive contains:
+#
+#	ethread_prune
+#
+echo x - ethread_prune
+sed 's/^X//' >ethread_prune << 'END-of-ethread_prune'
+X#!/usr/bin/perl -w
+X
+X#===============================================================================
+X#           _______ __                        __ 
+X#   .-----.|_     _|  |--.----.-----.---.-.--|  |
+X#   |  -__|  |   | |     |   _|  -__|  _  |  _  |
+X#   |_____|  |___| |__|__|__| |_____|___._|_____|
+X#                                                  
+X#   eThread - protein structure modeling by meta-threading
+X#
+X#   This software is distributed WITHOUT ANY WARRANTY (but with best wishes)
+X#
+X#   Report bugs and issues to michal@brylinski.org
+X#
+X#   Computational Systems Biology Group
+X#   Department of Biological Sciences
+X#   Center for Computation & Technology
+X#   Louisiana State University
+X#   407 Choppin Hall, Baton Rouge, LA 70803, USA
+X#
+X#   http://www.brylinski.org
+X#
+X#===============================================================================
+X
+X use strict;
+X use File::Slurp;
+X use Number::Range;
+X use Benchmark;
+X 
+X local $| = 1;
+X 
+X print "------------------------------------------------------------\n";
+X print "                       ethread_prune\n";
+X print "                        version 1.0\n";
+X print "       prunes unaligned regions form structure models\n\n";
+X print "       report bugs and issues to michal\@brylinski.org\n";
+X print "------------------------------------------------------------\n\n";
+X 
+X if ($#ARGV < 5)
+X {
+X  print "ethread_prune -i <eThread model in PDB format>\n";
+X  print "              -a <eThread alignments>\n";
+X  print "              -o <pruned model in PDB format>\n";
+X  print "              -l <min loop length to prune, default 30>\n";
+X  print "              -n <renumber residues: 0/1, default 0>\n";
+X  die "\n";
+X }
+X 
+X my $fpdb1 = '';
+X my $faln1 = '';
+X my $fout1 = '';
+X my $fcut1 = 30;
+X my $fnum1 = 0;
+X 
+X for ( my $i = 0; $i <= $#ARGV; $i++ )
+X {
+X  $fpdb1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-i' );
+X  $faln1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-a' );
+X  $fout1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-o' );
+X  $fcut1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-l' );
+X  $fnum1 = $ARGV[$i+1] if ( $ARGV[$i] eq '-n' );
+X }
+X 
+X die "Provide output filename\n" if ( !length($fout1) );
+X die "Provide eThread model in PDB format\n" if ( !( -e $fpdb1 ) or !length($fpdb1) );
+X die "Provide eThread alignments\n" if ( !( -e $faln1 ) or !length($faln1) );
+X 
+X my $bt0 = Benchmark->new;
+X 
+X print "Pruning model ... ";
+X 
+X my @pdb1 = read_file($fpdb1); chomp(@pdb1);
+X 
+X my @pdb2 = grep(/TEMPLATE/, @pdb1);
+X 
+X my @pdb3 = split(/\ /, $pdb2[0]);
+X 
+X my @aln1 = read_file($faln1); chomp(@aln1);
+X 
+X push(@aln1, '>P1');
+X 
+X my @aln2 = ();
+X 
+X my $bst1 = '';
+X my $bst2 = 1e6;
+X 
+X foreach my $waln1 (@aln1)
+X {
+X  if ( $waln1 =~ />P1/ )
+X  {
+X   if ( @aln2 )
+X   {
+X    my $dat1 = $aln2[0];
+X    
+X    $dat1 =~ s/>P1;//g;
+X    
+X    my @dat2 = split(/\ /, $dat1);
+X    
+X    if ( $dat2[0] eq $pdb3[2] )
+X    {
+X     my $seq1 = '';
+X     my $str1 = '';
+X     
+X     my $w1 = 0;
+X     
+X     foreach my $waln2 (@aln2)
+X     {
+X      $seq1 .= $waln2 if ( $w1 == 1 );
+X      $str1 .= $waln2 if ( $w1 == 2 );
+X      
+X      $w1 = 1 if ( $waln2 =~ /sequence/ );
+X      $w1 = 2 if ( $waln2 =~ /structureX/ );
+X      $w1 = 0 if ( $waln2 =~ /\*/ );
+X     }
+X     
+X     substr($seq1, -1, 1) = '' if ( substr($seq1, -1, 1) eq '*' );
+X     substr($str1, -1, 1) = '' if ( substr($str1, -1, 1) eq '*' );
+X     
+X     my $ran1 = Number::Range->new();
+X     
+X     my $n1 = 0;
+X     my $n2 = 0;
+X     my $n3 = 0;
+X     
+X     for ( my $xa = 0; $xa < length($seq1); $xa++ )
+X     {
+X      my $aa1 = substr($seq1, $xa, 1);
+X      my $aa2 = substr($str1, $xa, 1);
+X      
+X      $n1++ if ( $aa1 ne '-' );
+X      $n2++ if ( $aa2 ne '-' );
+X      
+X      if ( $aa1 ne '-' and $aa2 eq '-' )
+X      {
+X       $ran1->addrange($n1);
+X       
+X       $n3++;
+X      }
+X     }
+X     
+X     if ( $n3 )
+X     {
+X      my $ran2 = $ran1->range();
+X      
+X      if ( length($ran2) and $ran2 =~/\.\./ )
+X      {
+X       my $ran5 = '';
+X       my $ran6 = 0;
+X       
+X       my @ran3 = split(/\,/, $ran2);
+X       
+X       foreach my $wran3 (@ran3)
+X       {
+X        if ( $wran3 =~/\.\./ )
+X        {
+X         my @ran4 = split(/\.\./, $wran3);
+X         
+X         my $nran4 = @ran4;
+X         
+X         if ( $nran4 == 2 )
+X         {
+X          if ( $ran4[0] == 1 )
+X          {
+X           $ran5 .= ','.$wran3;
+X           
+X           $ran6 += ( $ran4[1] - $ran4[0] +1 );
+X          }
+X          elsif ( $ran4[1] == $n1 )
+X          {
+X           $ran5 .= ','.$wran3;
+X           
+X           $ran6 += ( $ran4[1] - $ran4[0] +1 );
+X          }
+X          elsif ( $ran4[1] - $ran4[0] + 1 >= $fcut1 )
+X          {
+X           $ran5 .= ','.$wran3;
+X           
+X           $ran6 += ( $ran4[1] - $ran4[0] +1 );
+X          }
+X         }
+X        }
+X       }
+X       
+X       if ( length($ran5) )
+X       {
+X        substr($ran5, 0, 1) = '' if ( substr($ran5, 0, 1) eq ',' );
+X       }
+X       
+X       if ( $ran6 < $bst2 )
+X       {
+X        $bst1 = $ran5;
+X        
+X        $bst2 = $ran6;
+X       }
+X      }
+X     }
+X    }
+X   }
+X   
+X   @aln2 = ();
+X  }
+X  
+X  push(@aln2, $waln1);
+X }
+X 
+X my $bst3 = Number::Range->new($bst1);
+X 
+X my @out1 = ();
+X my $out2 = 1;
+X my $out5 = -1e6;
+X my $out6 = 0;
+X my $out7 = 0;
+X 
+X foreach my $wpdb1 (@pdb1)
+X {
+X  if ( $wpdb1 =~ /ATOM\ \ / )
+X  {
+X   if ( $out2 )
+X   {
+X    if ( $bst2 and $bst2 < 1e6 )
+X    {
+X     push(@out1, "REMARK PRUNED $bst2 $bst1\n");
+X    }
+X    else
+X    {
+X     push(@out1, "REMARK PRUNED 0\n");
+X    }
+X    
+X    $out2 = 0;
+X   }
+X   
+X   my $out3 = $wpdb1;
+X   
+X   my $out4 = substr($out3, 22, 4) * 1;
+X   
+X   if ( !($bst3->inrange($out4)) )
+X   {
+X    if ( $fnum1 )
+X    {
+X     if ( $out4 > $out5 )
+X     {
+X      $out6++;
+X      
+X      $out5 = $out4;
+X     }
+X     
+X     substr($out3, 22, 4) = sprintf("%4d", $out6);
+X     substr($out3,  6, 5) = sprintf("%5d", ++$out7);
+X    }
+X    
+X    push(@out1, "$out3\n");
+X   }
+X  }
+X  else
+X  {
+X   push(@out1, "$wpdb1\n")
+X  }
+X }
+X 
+X write_file($fout1, @out1);
+X 
+X if ( $bst2 and $bst2 < 1e6 )
+X {
+X  print "$bst2 $bst1\n";
+X }
+X else
+X {
+X  print "0\n";
+X }
+X 
+X my $bt1 = Benchmark->new;
+X 
+X printf("\n------------------------------------------------------------\n");
+X printf("Walltime: %s\n", timestr(timediff($bt1, $bt0)));
+X printf("------------------------------------------------------------\n");
+X 
+X exit(0);
+END-of-ethread_prune
+exit
+

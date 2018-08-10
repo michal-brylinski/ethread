@@ -9,7 +9,7 @@
 #
 echo x - ethread_extract
 sed 's/^X//' >ethread_extract << 'END-of-ethread_extract'
-X#!/home/michal/local/bin/perl -w
+X#!/usr/bin/perl -w
 X
 X#===============================================================================
 X#           _______ __                        __ 
@@ -50,10 +50,10 @@ X print "------------------------------------------------------------\n\n";
 X 
 X if ($#ARGV < 3)
 X {
-X  print "econtact -i <eRank models in PDB format>\n";
-X  print "         -n <model number, default 1>\n";
-X  print "         -o <output model in PDB format>\n";
-X  print "         -a <align model onto x, y, z: 0/1, default 0>\n";
+X  print "ethread_extract -i <eRank models in PDB format>\n";
+X  print "                -n <model number, default 1>\n";
+X  print "                -o <output model in PDB format>\n";
+X  print "                -a <align model onto x, y, z: 0/1, default 0>\n";
 X  die "\n";
 X }
 X 

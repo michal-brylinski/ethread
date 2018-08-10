@@ -1,0 +1,1187 @@
+# This is a shell archive.  Save it in a file, remove anything before
+# this line, and then unpack it by entering "sh file".  Note, it may
+# create directories; files and directories will be owned by you and
+# have default permissions.
+#
+# This archive contains:
+#
+#	ethread_model_parallel
+#
+echo x - ethread_model_parallel
+sed 's/^X//' >ethread_model_parallel << 'END-of-ethread_model_parallel'
+X#!/usr/bin/perl -w
+X
+X#===============================================================================
+X#           _______ __                        __ 
+X#   .-----.|_     _|  |--.----.-----.---.-.--|  |
+X#   |  -__|  |   | |     |   _|  -__|  _  |  _  |
+X#   |_____|  |___| |__|__|__| |_____|___._|_____|
+X#                                                  
+X#   eThread - protein structure modeling by meta-threading
+X#
+X#   This software is distributed WITHOUT ANY WARRANTY (but with best wishes)
+X#
+X#   Report bugs and issues to michal@brylinski.org
+X#
+X#   Computational Systems Biology Group
+X#   Department of Biological Sciences
+X#   Center for Computation & Technology
+X#   Louisiana State University
+X#   407 Choppin Hall, Baton Rouge, LA 70803, USA
+X#
+X#   http://www.brylinski.org
+X#
+X#===============================================================================
+X
+X use strict;
+X use File::Slurp;
+X use File::Copy;
+X use Number::Range;
+X use Math::MatrixReal;
+X use Math::Trig;
+X use File::Temp qw/ tempfile tempdir /;
+X use Parallel::Simple::Dynamic;
+X use List::MoreUtils qw(part);
+X use List::Util qw(shuffle);
+X use Uniq;
+X use Cwd;
+X use Benchmark;
+X 
+X local $| = 1;
+X 
+X print "------------------------------------------------------------\n";
+X print "                   ethread_model_parallel\n";
+X print "                        version 2.0\n";
+X print "                     structure modeling\n\n";
+X print "       report bugs and issues to michal\@brylinski.org\n";
+X print "------------------------------------------------------------\n\n";
+X 
+X die "ET_MODELLER is not set\n" if !( $ENV{'ET_MODELLER'} );
+X die "ET_MODREFINER is not set\n" if !( $ENV{'ET_MODREFINER'} );
+X die "ET_FRTMALIGN is not set\n" if !( $ENV{'ET_FRTMALIGN'} );
+X die "ET_LIBPDB is not set\n" if !( $ENV{'ET_LIBPDB'} );
+X 
+X my $modeller = $ENV{'ET_MODELLER'};
+X my $modrefiner = $ENV{'ET_MODREFINER'};
+X my $frtmalign = $ENV{'ET_FRTMALIGN'};
+X my $pdb_library = $ENV{'ET_LIBPDB'};
+X 
+X my $input_alignments = '';
+X my $input_horiz = '';
+X my $output_name = '';
+X my $number_of_models = 13;
+X my $template_id = '';
+X my $secondary_restraints = 1;
+X my $refinement_low_scoring = 1;
+X my $align_to_axes = 1;
+X my $cutoff_low = 0.25;
+X my $cutoff_time = 1800;
+X my $number_of_cpus = 1;
+X 
+X die "Could not find modeller\n" if ( !( -e $modeller ) );
+X die "Could not find frtmalign\n" if ( !( -e $frtmalign ) );
+X die "Could not find template library in pdb format\n" if ( !( -e $pdb_library ) or !( -d $pdb_library ) );
+X 
+X my $mcrefinement = '';
+X my $emrefinement = '';
+X 
+X my $mr_option = '';
+X 
+X    if ( -e "$modrefiner/mcrefinement" and -e "$modrefiner/emrefinement" )
+X {
+X  $mcrefinement = "$modrefiner/mcrefinement";
+X  $emrefinement = "$modrefiner/emrefinement";
+X }
+X elsif ( -e "$modrefiner/mcrefinement_mac" and -e "$modrefiner/emrefinement_mac" )
+X {
+X  $mcrefinement = "$modrefiner/mcrefinement_mac";
+X  $emrefinement = "$modrefiner/emrefinement_mac";
+X  
+X  $mr_option = $cutoff_time;
+X }
+X else
+X {
+X  die "Could not find mcrefinement and emrefinement in $modrefiner\n";
+X }
+X 
+X if ($#ARGV < 2)
+X {
+X  print "ethread_model_parallel -e <eThread alignments>\n";
+X  print "                       -p <psipred horiz file>\n";
+X  print "                       -o <output name>\n";
+X  print "                       -n <number of models, default 13>\n";
+X  print "                       -t <id of the template, default none>\n";
+X  print "                       -s <secondary structure restraints 0/1, default 1>\n";
+X  print "                       -r <refine low scoring models 0/1, default 1>\n";
+X  print "                       -a <align to principal axes 0/1, default 1>\n";
+X  print "                       -c <number of processors, default 1>\n";
+X  die "\n";
+X }
+X 
+X for ( my $i = 0; $i <= $#ARGV; $i++ )
+X {
+X  $input_alignments       = $ARGV[$i+1] if ( $ARGV[$i] eq '-e' );
+X  $input_horiz            = $ARGV[$i+1] if ( $ARGV[$i] eq '-p' );
+X  $output_name            = $ARGV[$i+1] if ( $ARGV[$i] eq '-o' );
+X  $number_of_models       = $ARGV[$i+1] if ( $ARGV[$i] eq '-n' );
+X  $template_id            = $ARGV[$i+1] if ( $ARGV[$i] eq '-t' );
+X  $secondary_restraints   = $ARGV[$i+1] if ( $ARGV[$i] eq '-s' );
+X  $refinement_low_scoring = $ARGV[$i+1] if ( $ARGV[$i] eq '-r' );
+X  $align_to_axes          = $ARGV[$i+1] if ( $ARGV[$i] eq '-r' );
+X  $number_of_cpus         = $ARGV[$i+1] if ( $ARGV[$i] eq '-c' );
+X }
+X 
+X die "Provide output name\n" if ( !length($output_name) );
+X die "Provide eThread alignments\n" if ( !( -e $input_alignments ) or !length($input_alignments) );
+X die "Secondary structure restraints must be either 1 or 0\n" if ( $secondary_restraints ne '1' and $secondary_restraints ne '0' );
+X die "Refine low scoring models must be either 1 or 0\n" if ( $refinement_low_scoring ne '1' and $refinement_low_scoring ne '0' );
+X die "Align to principal axes must be either 1 or 0\n" if ( $align_to_axes ne '1' and $align_to_axes ne '0' );
+X die "Max number of models must be larger than 0\n" if ( $number_of_models < 1 );
+X die "Number of processors must be larger than 0\n" if ( $number_of_cpus < 1 );
+X 
+X if ( $secondary_restraints )
+X {
+X  die "Provide psipred horiz file\n" if ( !( -e $input_horiz ) or !length($input_horiz) );
+X }
+X 
+X $number_of_models = 1 if ( length($template_id) );
+X 
+X my $bench_start = Benchmark->new;
+X 
+X my $current_dir = getcwd();
+X 
+X my $temp_dir_1 = tempdir( CLEANUP => 1 );
+X 
+X printf("Tempdir created: %s\n\n", $temp_dir_1);
+X 
+X my ($fh1, $temp_file_1h) = tempfile( DIR => $temp_dir_1, UNLINK => 1);
+X 
+X my @tt01 = split(/\//, $temp_file_1h);
+X 
+X my $temp_file_1 = pop(@tt01);
+X 
+X 
+X # check library version -------------------------
+X 
+X my $library_version = $pdb_library;
+X 
+X substr($library_version, -1, 1) = '' if ( substr($library_version, -1, 1) eq '/' );
+X 
+X $library_version = "$library_version/../../version.info";
+X 
+X if ( -e $library_version )
+X {
+X  my @tt02 = read_file($library_version); chomp(@tt02);
+X  
+X  print "Template library: $tt02[0]\n\n";
+X }
+X 
+X 
+X # psipred horiz ---------------------------------
+X 
+X my @psipred_alpha = ();
+X my @psipred_beta = ();
+X 
+X if ( $secondary_restraints )
+X {
+X  my @horiz1 = read_file($input_horiz); chomp(@horiz1);
+X  
+X  my @horiz2 = grep(/Pred: /, @horiz1);
+X  
+X  my $tt03 = '';
+X  
+X  foreach my $whoriz2 (@horiz2)
+X  {
+X   while ( $whoriz2 =~ /Pred:/ ) { $whoriz2 =~ s/Pred://g; }
+X   while ( $whoriz2 =~ /\ / ) { $whoriz2 =~ s/\ //g; }
+X   
+X   $tt03.= $whoriz2;
+X  }
+X  
+X  my $range_h1 = Number::Range->new();
+X  my $range_b1 = Number::Range->new();
+X  
+X  my $range_h2 = 0;
+X  my $range_b2 = 0;
+X  
+X  for ( my $xa = 0; $xa < length($tt03); $xa++ )
+X  {
+X   my $tt04 = substr($tt03, $xa, 1);
+X   
+X   if ( $tt04 eq 'H' )
+X   {
+X    $range_h1->addrange($xa+1);
+X    
+X    $range_h2++;
+X   }
+X   
+X   if ( $tt04 eq 'E' )
+X   {
+X    $range_b1->addrange($xa+1);
+X    
+X    $range_b2++;
+X   }
+X  }
+X  
+X  if ( $range_h2 )
+X  {
+X   my $range_h3 = $range_h1->range;
+X   
+X   my @range_h4 = split(/\,/, $range_h3);
+X   
+X   foreach my $wrange_h4 (@range_h4)
+X   {
+X    my @range_h5 = split(/\.\./, $wrange_h4);
+X    
+X    my $range_h6 = @range_h5;
+X    
+X    if ( $range_h6 > 1 )
+X    {
+X     push(@psipred_alpha, "$range_h5[0]:$range_h5[1]");
+X    }
+X    else
+X    {
+X     push(@psipred_alpha, "$range_h5[0]:$range_h5[0]");
+X    }
+X   }
+X  }
+X  
+X  if ( $range_b2 )
+X  {
+X   my $range_b3 = $range_b1->range;
+X   
+X   my @range_b4 = split(/\,/, $range_b3);
+X   
+X   foreach my $wrange_b4 (@range_b4)
+X   {
+X    my @range_b5 = split(/\.\./, $wrange_b4);
+X    
+X    my $range_b6 = @range_b5;
+X    
+X    if ( $range_b6 > 1 )
+X    {
+X     push(@psipred_beta, "$range_b5[0]:$range_b5[1]");
+X    }
+X    else
+X    {
+X     push(@psipred_beta, "$range_b5[0]:$range_b5[0]");
+X    }
+X   }
+X  }
+X }
+X 
+X 
+X # build models ----------------------------------
+X 
+X my @alignment_data = read_file($input_alignments); chomp(@alignment_data);
+X 
+X push(@alignment_data, '>');
+X 
+X my @tt05 = grep(/structureX/, @alignment_data);
+X 
+X my $alignment_number = @tt05;
+X 
+X $alignment_number = $number_of_models if ( $alignment_number > $number_of_models );
+X 
+X if ( length($template_id) )
+X {
+X  print "Constructing model from $template_id ...";
+X }
+X else
+X {
+X  if ( $alignment_number > 1 )
+X  {
+X   print "Constructing top $alignment_number models ...";
+X  }
+X  else
+X  {
+X   print "Constructing top model ...";
+X  }
+X }
+X 
+X my $number_1 = 0;
+X 
+X my @temp_alignment = ();
+X 
+X my @joined_alignments = ();
+X 
+X my @alignment_list = ();
+X 
+X foreach my $walignment_data (@alignment_data)
+X {
+X  if ( $walignment_data =~ /\>/ )
+X  {
+X   if ( @temp_alignment )
+X   {
+X    my $tt06 = $temp_alignment[0];
+X    
+X    $tt06 =~ s/\>P1\;//g;
+X    
+X    my @tt07 = split(/\ /, $tt06);
+X    
+X    if ( !length($template_id) or $tt07[0] eq $template_id )
+X    {
+X     my $tt08 = '';
+X     
+X     foreach my $wtemp_alignment (@temp_alignment)
+X     {
+X      if ( length($tt08) )
+X      {
+X       $tt08 .= '?'.$wtemp_alignment;
+X      }
+X      else
+X      {
+X       $tt08 = $wtemp_alignment;
+X      }
+X     }
+X     
+X     push(@joined_alignments, $tt08);
+X     
+X     push(@alignment_list, $number_1 );
+X     
+X     $number_1++;
+X    }
+X   }
+X   
+X   @temp_alignment = ();
+X  }
+X  
+X  push(@temp_alignment, $walignment_data);
+X  
+X  last if ( $number_1 >= $number_of_models );
+X }
+X 
+X @alignment_list = shuffle @alignment_list;
+X 
+X my $n_alignment_list = @alignment_list;
+X 
+X $number_of_cpus = $n_alignment_list if ( $number_of_cpus > $n_alignment_list );
+X 
+X my $tt09 = 0;
+X 
+X my @tasks_1 = part {$number_of_cpus * $tt09++ / @alignment_list} @alignment_list;
+X 
+X my $parallel_1 = Parallel::Simple::Dynamic->new();
+X 
+X my @parallel_result = $parallel_1->drun( { call_back => \&run_modeling, parts => $number_of_cpus, list => \@tasks_1 } );
+X 
+X sub run_modeling
+X {
+X  my ($index_1) = @_;
+X  
+X  sleep($index_1);
+X  
+X  $index_1--;
+X  
+X  my @tasks_2 = @{$tasks_1[$index_1]};
+X  
+X  
+X  # iterate over alignments ----------------------
+X  
+X  foreach my $current_task ( @tasks_2 )
+X  {
+X   my @current_alignment = split(/\?/, $joined_alignments[$current_task]);
+X   
+X   print ' '.( $current_task + 1 );
+X   
+X   my @alignment_structure_1 = ();
+X   my @alignment_sequence_1 = ();
+X   
+X   my $alignment_structure_2 = '';
+X   my $alignment_sequence_2 = '';
+X   
+X   my $w1 = 0;
+X   
+X   my $number_2 = 0;
+X   my $number_3 = 0;
+X   
+X   
+X   # parse alignment -----------------------------
+X   
+X   foreach my $w_current_alignment (@current_alignment)
+X   {
+X    $w1 = 1 if ( $w_current_alignment =~ /structureX/ );
+X    $w1 = 2 if ( $w_current_alignment =~ /sequence/ );
+X    
+X    $w1 = 0 if ( !length($w_current_alignment) );
+X    
+X    if ( $w1 == 1 )
+X    {
+X     if ( !( $w_current_alignment =~ /structureX/ ) )
+X     {
+X      push(@alignment_structure_1, $w_current_alignment);
+X      
+X      for ( my $xa = 0; $xa < length($w_current_alignment); $xa++ )
+X      {
+X       my $tt10 = substr($w_current_alignment, $xa, 1);
+X       
+X       $number_2++ if ( $tt10 ne '-' and $tt10 ne '*' );
+X       
+X       $alignment_structure_2 .= $tt10 if ( $tt10 ne '*' );
+X      }
+X     }
+X    }
+X    
+X    if ( $w1 == 2 )
+X    {
+X     if ( !( $w_current_alignment =~ /sequence/ ) )
+X     {
+X      push(@alignment_sequence_1, $w_current_alignment);
+X      
+X      for ( my $xa = 0; $xa < length($w_current_alignment); $xa++ )
+X      {
+X       my $tt10 = substr($w_current_alignment, $xa, 1);
+X       
+X       $number_3++ if ( $tt10 ne '-' and $tt10 ne '*' );
+X       
+X       $alignment_sequence_2 .= $tt10 if ( $tt10 ne '*' );
+X      }
+X     }
+X    }
+X   }
+X   
+X   
+X   # map residues --------------------------------
+X   
+X   my %residue_mapping = ();
+X   
+X   my $number_4 = 0;
+X   my $number_5 = 0;
+X   
+X   for ( my $xa = 0; $xa < length($alignment_structure_2); $xa++ )
+X   {
+X    my $tt11 = substr($alignment_structure_2, $xa, 1);
+X    my $tt12 = substr($alignment_sequence_2, $xa, 1);
+X    
+X    $number_4++ if ( $tt11 ne '-' );
+X    $number_5++ if ( $tt12 ne '-' );
+X    
+X    $residue_mapping{$number_5} = $number_4 if ( $tt11 ne '-' and $tt12 ne '-' );
+X   }
+X   
+X   
+X   # prepare modeller alignment ------------------
+X   
+X   my $temp_dir_2 = tempdir( CLEANUP => 1 );
+X   
+X   my ($fh2, $temp_file_2h) = tempfile( DIR => $temp_dir_2, UNLINK => 1);
+X   my ($fh3, $temp_file_3h) = tempfile( DIR => $temp_dir_2, UNLINK => 1);
+X   my ($fh4, $temp_file_4h) = tempfile( DIR => $temp_dir_2, UNLINK => 1);
+X   
+X   my @tt13a = split(/\//, $temp_file_2h);
+X   my @tt13b = split(/\//, $temp_file_3h);
+X   my @tt13c = split(/\//, $temp_file_4h);
+X   
+X   my $temp_file_2 = pop(@tt13a);
+X   my $temp_file_3 = pop(@tt13b);
+X   my $temp_file_4 = pop(@tt13c);
+X   
+X   my $tt14 = $current_alignment[0];
+X   
+X   $tt14 =~ s/\>P1\;//g;
+X   
+X   my @tt15 = split(/\ /, $tt14);
+X   
+X   my @modeller_alignment = ();
+X   
+X   my $current_template = $tt15[0];
+X   
+X   my $chain_1 = substr($current_template, -1, 1);
+X   
+X   push(@modeller_alignment, '>P1;'.($temp_file_2).'-'.($current_template).'.pdb'."\n");
+X   
+X   push(@modeller_alignment, 'structureX:'.($temp_file_2).'-'.($current_template).'.pdb:1:'.($chain_1).':'.($number_2).':'.($chain_1).':::0.00:0.00'."\n");
+X   
+X   foreach my $w_alignment_structure_1 (@alignment_structure_1)
+X   {
+X    push(@modeller_alignment, "$w_alignment_structure_1\n");
+X   }
+X   
+X   push(@modeller_alignment, '>P1;'.($temp_file_2).'-'.($current_task)."\n");
+X   
+X   push(@modeller_alignment, 'sequence:'.($temp_file_2).'-'.($current_task).':1::'.($number_3).'::::0.00:0.00'."\n");
+X   
+X   foreach my $w_alignment_sequence_1 (@alignment_sequence_1)
+X   {
+X    push(@modeller_alignment, "$w_alignment_sequence_1\n");
+X   }
+X   
+X   
+X   # prepare modeller input ----------------------
+X   
+X   my @modeller_input = ();
+X   
+X   if ( $secondary_restraints )
+X   {
+X    push(@modeller_input, sprintf("%s\n", 'from modeller import *'));
+X    push(@modeller_input, sprintf("%s\n", 'from modeller.automodel import *'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'log.verbose()'));
+X    push(@modeller_input, sprintf("%s\n", 'env = environ()'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'class MyModel(automodel):'));
+X    push(@modeller_input, sprintf("%s\n", '    def special_restraints(self, aln):'));
+X    push(@modeller_input, sprintf("%s\n", '        rsr = self.restraints'));
+X    push(@modeller_input, sprintf("%s\n", '        at = self.atoms'));
+X    
+X    if ( @psipred_alpha )
+X    {
+X     foreach my $w_psipred_alpha (@psipred_alpha)
+X     {
+X      my @tt16 = split(/\:/, $w_psipred_alpha);
+X      
+X      push(@modeller_input, sprintf("%s%s%d%s%s%s%s%d%s%s%s\n", '        rsr.add(secondary_structure.alpha(self.residue_range(', chr(39) , $tt16[0], ':', chr(39), ', ', chr(39), $tt16[1], ':', chr(39), ')))'));
+X     }
+X    }
+X    
+X    if ( @psipred_beta )
+X    {
+X     foreach my $w_psipred_beta (@psipred_beta)
+X     {
+X      my @tt16 = split(/\:/, $w_psipred_beta);
+X      
+X      push(@modeller_input, sprintf("%s%s%d%s%s%s%s%d%s%s%s\n", '        rsr.add(secondary_structure.strand(self.residue_range(', chr(39) , $tt16[0], ':', chr(39), ', ', chr(39), $tt16[1], ':', chr(39), ')))'));
+X     }
+X    }
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'a = MyModel(env,'));
+X    push(@modeller_input, sprintf("%s%s%s%s%s%s%s%s\n", '            alnfile=', chr(39), $temp_file_2, '-', $current_template, '.ali', chr(39), ','));
+X    push(@modeller_input, sprintf("%s%s%s%s%s%s%s%s\n", '            knowns=(', chr(39), $temp_file_2, '-', $current_template, '.pdb', chr(39), '),'));
+X    push(@modeller_input, sprintf("%s%s%s%s%s%s%s\n", '            sequence=', chr(39), $temp_file_2, '-', $current_task, chr(39), ','));
+X    push(@modeller_input, sprintf("%s\n", '            assess_methods= (assess.DOPE,assess.GA341))'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'a.starting_model= 1'));
+X    push(@modeller_input, sprintf("%s\n", 'a.ending_model  = 1'));
+X    push(@modeller_input, sprintf("%s\n", 'a.library_schedule = autosched.slow'));
+X    push(@modeller_input, sprintf("%s\n", 'a.max_var_iterations = 300'));
+X    push(@modeller_input, sprintf("%s\n", 'a.md_level = refine.slow'));
+X    push(@modeller_input, sprintf("%s\n", 'a.repeat_optimization = 1'));
+X    push(@modeller_input, sprintf("%s\n", 'a.max_molpdf = 1e8'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'a.make()'));
+X   }
+X   else
+X   {
+X    push(@modeller_input, sprintf("%s\n", 'from modeller import *'));
+X    push(@modeller_input, sprintf("%s\n", 'from modeller.automodel import *'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'log.verbose()'));
+X    push(@modeller_input, sprintf("%s\n", 'env = environ()'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'a = automodel(env,'));
+X    push(@modeller_input, sprintf("%s%s%s%s%s%s%s%s\n", '            alnfile=', chr(39), $temp_file_2, '-', $current_template, '.ali', chr(39), ','));
+X    push(@modeller_input, sprintf("%s%s%s%s%s%s%s%s\n", '            knowns=(', chr(39), $temp_file_2, '-', $current_template, '.pdb', chr(39), '),'));
+X    push(@modeller_input, sprintf("%s%s%s%s%s%s%s\n", '            sequence=', chr(39), $temp_file_2, '-', $current_task, chr(39), ','));
+X    push(@modeller_input, sprintf("%s\n", '            assess_methods= (assess.DOPE,assess.GA341))'));
+X
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'a.starting_model= 1'));
+X    push(@modeller_input, sprintf("%s\n", 'a.ending_model  = 1'));
+X    push(@modeller_input, sprintf("%s\n", 'a.library_schedule = autosched.slow'));
+X    push(@modeller_input, sprintf("%s\n", 'a.max_var_iterations = 300'));
+X    push(@modeller_input, sprintf("%s\n", 'a.md_level = refine.slow'));
+X    push(@modeller_input, sprintf("%s\n", 'a.repeat_optimization = 1'));
+X    push(@modeller_input, sprintf("%s\n", 'a.max_molpdf = 1e8'));
+X    
+X    push(@modeller_input, "\n");
+X    
+X    push(@modeller_input, sprintf("%s\n", 'a.make()'));
+X   }
+X   
+X   
+X   # run modeller --------------------------------
+X   
+X   chdir($temp_dir_2);
+X   
+X   write_file("$temp_file_2-$current_template.ali", @modeller_alignment);
+X   write_file("$temp_file_2-$current_template.py", @modeller_input);
+X   
+X   copy("$pdb_library/$current_template.pdb", "$temp_file_2-$current_template.pdb");
+X   
+X   open (MOD, "$modeller $temp_file_2-$current_template.py 2>&1 |") || die "Cannot run $modeller $temp_file_2-$current_template.py\n";
+X    my @modeller_out=<MOD>;
+X    chomp(@modeller_out);
+X   close (MOD);
+X   
+X   my @modeller_pdb = ();
+X   
+X   if ( -e "$temp_file_2-$current_task.B99990001.pdb" )
+X   {
+X    my @tt17 = read_file("$temp_file_2-$current_task.B99990001.pdb"); chomp(@tt17);
+X    
+X    @modeller_pdb = grep(/ATOM  /, @tt17);
+X   }
+X   
+X   chdir($current_dir);
+X     
+X   if ( @modeller_pdb )
+X   {
+X    # run modrefiner -----------------------------
+X    
+X    my $refine_1 = 0;
+X    
+X    if ( $refinement_low_scoring )
+X    {
+X        if ( $tt15[2] eq 'L' )
+X     {
+X      $refine_1 = 1;
+X     }
+X     elsif ( $tt15[2] eq 'T' and $tt15[6] eq 'H' and $tt15[3] < 0.6  )
+X     {
+X      $refine_1 = 1;
+X     }
+X     elsif ( $tt15[2] eq 'T' and $tt15[6] eq 'R' and $tt15[3] < 0.6  )
+X     {
+X      $refine_1 = 1;
+X     }
+X     elsif ( $tt15[2] eq 'T' and $tt15[6] eq 'S' and $tt15[3] < 0.7  )
+X     {
+X      $refine_1 = 1;
+X     }
+X    }
+X    
+X    if ( $refine_1 )
+X    {
+X     chdir($temp_dir_2);
+X     
+X     unlink('trf.mat') if ( -e 'trf.mat' );
+X     
+X     open (SUP, "$frtmalign $temp_file_2-$current_template.pdb $temp_file_2-$current_task.B99990001.pdb -m 1 2>&1 |") || die "Cannot execute $frtmalign $temp_file_2-$current_template.pdb $temp_file_2-$current_task.B99990001.pdb -m 1 2>&1\n";
+X      my @superposition_1=<SUP>;
+X      chomp(@superposition_1);
+X     close (SUP);
+X     
+X     my @superposition_2 = read_file('trf.mat'); chomp(@superposition_2);
+X     
+X     unlink('trf.mat') if ( -e 'trf.mat' );
+X     
+X     my @template_pdb_1 = read_file("$temp_file_2-$current_template.pdb"); chomp(@template_pdb_1);
+X     
+X     @template_pdb_1 = grep(/ CA /, @template_pdb_1);
+X     
+X     my @rotation_t = ();
+X     my @rotation_u = ();
+X     
+X     my $tt18 = shift(@superposition_2); $tt18 = shift(@superposition_2);
+X     
+X     for ( my $xa = 0; $xa < 3; $xa++ )
+X     {
+X      $rotation_t[$xa] = substr($superposition_2[$xa], 2, 18) * 1.0;
+X      
+X      $rotation_u[0][$xa] = substr($superposition_2[$xa], 20, 15) * 1.0;
+X      $rotation_u[1][$xa] = substr($superposition_2[$xa], 35, 15) * 1.0;
+X      $rotation_u[2][$xa] = substr($superposition_2[$xa], 50, 15) * 1.0;
+X     }
+X     
+X     my @template_pdb_2 = ();
+X     
+X     foreach my $w_template_pdb_1 (@template_pdb_1)
+X     {
+X      my $tt19 = substr($w_template_pdb_1, 22, 4) * 1;
+X      
+X      if ( exists $residue_mapping{$tt19} )
+X      {
+X       my $x1 = substr($w_template_pdb_1, 30, 8) * 1.0;
+X       my $y1 = substr($w_template_pdb_1, 38, 8) * 1.0;
+X       my $z1 = substr($w_template_pdb_1, 46, 8) * 1.0;
+X      
+X       my $x2 = $rotation_t[0] + $rotation_u[0][0] * $x1 + $rotation_u[1][0] * $y1 + $rotation_u[2][0] * $z1;
+X       my $y2 = $rotation_t[1] + $rotation_u[0][1] * $x1 + $rotation_u[1][1] * $y1 + $rotation_u[2][1] * $z1;
+X       my $z2 = $rotation_t[2] + $rotation_u[0][2] * $x1 + $rotation_u[1][2] * $y1 + $rotation_u[2][2] * $z1;
+X      
+X       substr($w_template_pdb_1, 22, 4) = sprintf("%4d", $residue_mapping{$tt19});
+X      
+X       substr($w_template_pdb_1, 30, 24) = sprintf("%8.3f%8.3f%8.3f", $x2, $y2, $z2);
+X       
+X       push(@template_pdb_2, $w_template_pdb_1."\n");
+X      }
+X     }
+X     
+X     push(@template_pdb_2, "TER\n");
+X     push(@template_pdb_2, "END\n");
+X     
+X     my @modrefiner_1 = ();
+X     
+X     foreach my $w_modeller_pdb (@modeller_pdb)
+X     {
+X      push(@modrefiner_1, $w_modeller_pdb."\n");
+X     }
+X     
+X     push(@modrefiner_1, "TER\n");
+X     push(@modrefiner_1, "END\n");
+X     
+X     write_file($temp_file_3, @modrefiner_1);
+X     write_file($temp_file_4, @template_pdb_2);
+X     
+X     my $random_1 = int(rand(1000000));
+X     
+X     open (REF, "sh -c 'ulimit -t $cutoff_time ; $mcrefinement $temp_dir_2 $modrefiner $temp_file_3 $temp_file_4 $random_1 $mr_option' > /dev/null 2>&1 |") || die "Cannot execute $mcrefinement $temp_dir_2 $modrefiner $temp_file_3 $temp_file_4 $random_1 $mr_option\n";
+X      my @modrefiner_2=<REF>;
+X      chomp(@modrefiner_2);
+X     close (REF);
+X     
+X     my $random_2 = int(rand(1000000));
+X     
+X     open (REF, "sh -c 'ulimit -t $cutoff_time ; $emrefinement $temp_dir_2 $modrefiner mc$temp_file_3 $temp_file_4 $tt15[3] $random_2 $mr_option' > /dev/null 2>&1 |") || die "Cannot execute $emrefinement $temp_dir_2 $modrefiner mc$temp_file_3 $temp_file_4 $tt15[3] $random_2 $mr_option\n";
+X      my @modrefiner_3=<REF>;
+X      chomp(@modrefiner_3);
+X     close (REF);
+X     
+X     my @modrefiner_4 = read_file("emmc$temp_file_3"); chomp(@modrefiner_4);
+X     
+X     @modrefiner_4 = grep(/ATOM  /, @modrefiner_4);
+X     
+X     my $tt20 = 0;
+X     
+X     @modeller_pdb = ();
+X     
+X     foreach my $w_modrefiner_4 (@modrefiner_4) 
+X     {
+X      if ( substr($w_modrefiner_4, 13, 1) ne 'H' )
+X      {
+X       substr($w_modrefiner_4, 6, 5) = sprintf("%5d", ++$tt20);
+X       
+X       push(@modeller_pdb, $w_modrefiner_4);
+X      }
+X     }
+X     
+X     unlink($temp_file_3) if ( -e $temp_file_3 );
+X     unlink($temp_file_4) if ( -e $temp_file_4 );
+X     
+X     unlink("mc$temp_file_3") if ( -e "mc$temp_file_3" );
+X     unlink("emmc$temp_file_3") if ( -e "emmc$temp_file_3" );
+X     
+X     chdir($current_dir);
+X    }
+X    
+X    
+X    # align to principal axes --------------------
+X    
+X    if ( $align_to_axes )
+X    {
+X     my $mass1 = 0.0;
+X     
+X     foreach my $w_modeller_pdb (@modeller_pdb)
+X     {
+X      if ( length($w_modeller_pdb) > 52 )
+X      {
+X       if (substr($w_modeller_pdb, 0, 6) eq 'ATOM  ' and substr($w_modeller_pdb, 13, 1) ne 'H' )
+X       {
+X        my $at = substr($w_modeller_pdb, 13, 1);
+X        my $px = substr($w_modeller_pdb, 30, 8); $px *= 1.0;
+X        my $py = substr($w_modeller_pdb, 38, 8); $py *= 1.0;
+X        my $pz = substr($w_modeller_pdb, 46, 8); $pz *= 1.0;
+X        
+X           if ( $at eq 'C' ) { $mass1 += 12.0107; }
+X        elsif ( $at eq 'N' ) { $mass1 += 14.0067; }
+X        elsif ( $at eq 'O' ) { $mass1 += 15.9994; }
+X        elsif ( $at eq 'S' ) { $mass1 += 32.0650; }
+X       }
+X      }
+X     }
+X     
+X     my $cx = 0.0;
+X     my $cy = 0.0;
+X     my $cz = 0.0;
+X     
+X     foreach my $w_modeller_pdb (@modeller_pdb)
+X     {
+X      if ( length($w_modeller_pdb) > 52 )
+X      {
+X       if (substr($w_modeller_pdb, 0, 6) eq 'ATOM  ' and substr($w_modeller_pdb, 13, 1) ne 'H' )
+X       {
+X        my $at = substr($w_modeller_pdb, 13, 1);
+X        my $px = substr($w_modeller_pdb, 30, 8); $px *= 1.0;
+X        my $py = substr($w_modeller_pdb, 38, 8); $py *= 1.0;
+X        my $pz = substr($w_modeller_pdb, 46, 8); $pz *= 1.0;
+X        
+X        my $mass2 = 0.0;
+X        
+X           if ( $at eq 'C' ) { $mass2 = 12.0107; }
+X        elsif ( $at eq 'N' ) { $mass2 = 14.0067; }
+X        elsif ( $at eq 'O' ) { $mass2 = 15.9994; }
+X        elsif ( $at eq 'S' ) { $mass2 = 32.0650; }
+X        
+X        $cx += $px * ( $mass2 / $mass1 );
+X        $cy += $py * ( $mass2 / $mass1 );
+X        $cz += $pz * ( $mass2 / $mass1 );
+X       }
+X      }
+X     }
+X     
+X     
+X     # translate to the origin -------------------
+X     
+X     my @xyz = ();
+X     my $nxyz = 0;
+X     
+X     foreach my $w_modeller_pdb (@modeller_pdb)
+X     {
+X      if ( length($w_modeller_pdb) > 52 )
+X      {
+X       if (substr($w_modeller_pdb, 0, 6) eq 'ATOM  ' and substr($w_modeller_pdb, 13, 1) ne 'H' )
+X       {
+X        my $p1 = substr($w_modeller_pdb,  0, 26);
+X        my $pa = substr($w_modeller_pdb, 13,  1);
+X        my $px = substr($w_modeller_pdb, 30,  8) - $cx;
+X        my $py = substr($w_modeller_pdb, 38,  8) - $cy;
+X        my $pz = substr($w_modeller_pdb, 46,  8) - $cz;
+X        
+X        $xyz[$nxyz][0] = $px;
+X        $xyz[$nxyz][1] = $py;
+X        $xyz[$nxyz][2] = $pz;
+X        $xyz[$nxyz][3] = $pa;
+X        $xyz[$nxyz][4] = $p1;
+X        $nxyz++
+X       }
+X      }
+X     }
+X     
+X     
+X     # calculate eigensystems ---------------------
+X     
+X     my $Ixx = 0.0;
+X     my $Ixy = 0.0;
+X     my $Ixz = 0.0;
+X     my $Iyx = 0.0;
+X     my $Iyy = 0.0;
+X     my $Iyz = 0.0;
+X     my $Izx = 0.0;
+X     my $Izy = 0.0;
+X     my $Izz = 0.0;
+X     
+X     for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X     {
+X      my $mass3 = 0.0;
+X      
+X         if ( $xyz[$xa][3] eq 'C' ) { $mass3 = 12.0107; }
+X      elsif ( $xyz[$xa][3] eq 'N' ) { $mass3 = 14.0067; }
+X      elsif ( $xyz[$xa][3] eq 'O' ) { $mass3 = 15.9994; }
+X      elsif ( $xyz[$xa][3] eq 'S' ) { $mass3 = 32.0650; }
+X      
+X      $Ixx += $mass3 * ( ( $xyz[$xa][1]**2.0 ) + ( $xyz[$xa][2]**2.0 ) );
+X      $Iyy += $mass3 * ( ( $xyz[$xa][0]**2.0 ) + ( $xyz[$xa][2]**2.0 ) );
+X      $Izz += $mass3 * ( ( $xyz[$xa][0]**2.0 ) + ( $xyz[$xa][1]**2.0 ) );
+X      $Ixy -= $mass3 * $xyz[$xa][0] * $xyz[$xa][1];
+X      $Ixz -= $mass3 * $xyz[$xa][0] * $xyz[$xa][2];
+X      $Iyz -= $mass3 * $xyz[$xa][1] * $xyz[$xa][2];
+X      $Iyx -= $mass3 * $xyz[$xa][0] * $xyz[$xa][1];
+X      $Izx -= $mass3 * $xyz[$xa][0] * $xyz[$xa][2];
+X      $Izy -= $mass3 * $xyz[$xa][1] * $xyz[$xa][2];
+X     }
+X     
+X     my $matrix0 = Math::MatrixReal->new_from_rows( [ [$Ixx, $Ixy, $Ixz], [$Iyx, $Iyy, $Iyz], [$Izx, $Izy, $Izz] ] );
+X     
+X     ( my $l0, my $V0) = $matrix0->sym_diagonalize();
+X     
+X     my $I1 = $l0->element( 1, 1 );
+X     my $I2 = $l0->element( 2, 1 );
+X     my $I3 = $l0->element( 3, 1 );
+X     
+X     my $e1 = 0;
+X     my $e2 = 0;
+X     my $e3 = 0;
+X     
+X        if ( $I1 > $I2 and $I2 > $I3 )
+X     {
+X      $e1 = 1;
+X      $e2 = 2;
+X      $e3 = 3;
+X     }
+X     elsif ( $I1 > $I3 and $I3 > $I2 )
+X     {
+X      $e1 = 1;
+X      $e2 = 3;
+X      $e3 = 2;
+X     }
+X     elsif ( $I2 > $I1 and $I1 > $I3 )
+X     {
+X      $e1 = 2;
+X      $e2 = 1;
+X      $e3 = 3;
+X     }
+X     elsif ( $I2 > $I3 and $I3 > $I1 )
+X     {
+X      $e1 = 2;
+X      $e2 = 3;
+X      $e3 = 1;
+X     }
+X     elsif ( $I3 > $I1 and $I1 > $I2 )
+X     {
+X      $e1 = 3;
+X      $e2 = 1;
+X      $e3 = 2;
+X     }
+X     elsif ( $I3 > $I2 and $I2 > $I1 )
+X     {
+X      $e1 = 3;
+X      $e2 = 2;
+X      $e3 = 1;
+X     }
+X     else { die "Cannot pick up the largest I: $I1, $I2, $I3\n"; }
+X     
+X     my @lax_1 = ();
+X     my @lax_2 = ();
+X     my @lax_3 = ();
+X     
+X     my $h1 = $V0->element( 1, $e1 ); $lax_1[0] = $h1;
+X     my $h2 = $V0->element( 2, $e1 ); $lax_1[1] = $h2;
+X     my $h3 = $V0->element( 3, $e1 ); $lax_1[2] = $h3;
+X     
+X     my $matrix1 = Math::MatrixReal->new_from_cols( [[ $h1, $h2, $h3 ]] );
+X     
+X        $h1 = $V0->element( 1, $e2 ); $lax_2[0] = $h1;
+X        $h2 = $V0->element( 2, $e2 ); $lax_2[1] = $h2;
+X        $h3 = $V0->element( 3, $e2 ); $lax_2[2] = $h3;
+X     
+X     my $matrix2 = Math::MatrixReal->new_from_cols( [[ $h1, $h2, $h3 ]] );
+X     
+X        $h1 = $V0->element( 1, $e3 ); $lax_3[0] = $h1;
+X        $h2 = $V0->element( 2, $e3 ); $lax_3[1] = $h2;
+X        $h3 = $V0->element( 3, $e3 ); $lax_3[2] = $h3;
+X     
+X     my $matrix3 = Math::MatrixReal->new_from_cols( [[ $h1, $h2, $h3 ]] );
+X     
+X     
+X     # shape weighted principal axes -------------
+X     
+X     my $wp1_1 = 0.0;
+X     my $wp1_2 = 0.0;
+X     my $wp1_3 = 0.0;
+X     my $wp2   = 0.0;
+X     
+X     for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X     {
+X      my $mass3 = 0.0;
+X      
+X         if ( $xyz[$xa][3] eq 'C' ) { $mass3 = 12.0107; }
+X      elsif ( $xyz[$xa][3] eq 'N' ) { $mass3 = 14.0067; }
+X      elsif ( $xyz[$xa][3] eq 'O' ) { $mass3 = 15.9994; }
+X      elsif ( $xyz[$xa][3] eq 'S' ) { $mass3 = 32.0650; }
+X      
+X      $wp1_1 += $mass3 * ( $xyz[$xa][0] * $lax_1[0] + $xyz[$xa][1] * $lax_1[1] + $xyz[$xa][2] * $lax_1[2] )**2; 
+X      $wp1_2 += $mass3 * ( $xyz[$xa][0] * $lax_2[0] + $xyz[$xa][1] * $lax_2[1] + $xyz[$xa][2] * $lax_2[2] )**2; 
+X      $wp1_3 += $mass3 * ( $xyz[$xa][0] * $lax_3[0] + $xyz[$xa][1] * $lax_3[1] + $xyz[$xa][2] * $lax_3[2] )**2; 
+X      
+X      $wp2  += $mass3;
+X     }
+X     
+X     my @Vk_1 = ();
+X     my @Vk_2 = ();
+X     my @Vk_3 = ();
+X     
+X     $Vk_1[0] = $lax_1[0] * sqrt( $wp1_1 / $wp2 );
+X     $Vk_1[1] = $lax_1[1] * sqrt( $wp1_1 / $wp2 );
+X     $Vk_1[2] = $lax_1[2] * sqrt( $wp1_1 / $wp2 );
+X     
+X     $Vk_2[0] = $lax_2[0] * sqrt( $wp1_2 / $wp2 );
+X     $Vk_2[1] = $lax_2[1] * sqrt( $wp1_2 / $wp2 );
+X     $Vk_2[2] = $lax_2[2] * sqrt( $wp1_2 / $wp2 );
+X     
+X     $Vk_3[0] = $lax_3[0] * sqrt( $wp1_3 / $wp2 );
+X     $Vk_3[1] = $lax_3[1] * sqrt( $wp1_3 / $wp2 );
+X     $Vk_3[2] = $lax_3[2] * sqrt( $wp1_3 / $wp2 );
+X     
+X     my $r1 = sqrt($Vk_1[0]**2 + $Vk_1[1]**2 + $Vk_1[2]**2);
+X     my $r2 = sqrt($Vk_2[0]**2 + $Vk_2[1]**2 + $Vk_2[2]**2);
+X     my $r3 = sqrt($Vk_3[0]**2 + $Vk_3[1]**2 + $Vk_3[2]**2);
+X     
+X     my @pa1 = ();
+X     my @pa2 = ();
+X        
+X     $pa1[0][0] = 0.0;
+X     $pa1[0][1] = 0.0;
+X     $pa1[0][2] = 0.0;
+X     
+X     $pa1[1][0] = 0.0;
+X     $pa1[1][1] = 0.0;
+X     $pa1[1][2] = $r1;
+X     
+X     $pa1[2][0] = 0.0;
+X     $pa1[2][1] = $r2;
+X     $pa1[2][2] = 0.0;
+X     
+X     $pa1[3][0] = $r3;
+X     $pa1[3][1] = 0.0;
+X     $pa1[3][2] = 0.0;
+X     
+X     $pa2[0][0] = 0.0;
+X     $pa2[0][1] = 0.0;
+X     $pa2[0][2] = 0.0;
+X     
+X     $pa2[1][0] = $Vk_1[0];
+X     $pa2[1][1] = $Vk_1[1];
+X     $pa2[1][2] = $Vk_1[2];
+X     
+X     $pa2[2][0] = $Vk_2[0];
+X     $pa2[2][1] = $Vk_2[1];
+X     $pa2[2][2] = $Vk_2[2];
+X     
+X     $pa2[3][0] = $Vk_3[0];
+X     $pa2[3][1] = $Vk_3[1];
+X     $pa2[3][2] = $Vk_3[2];
+X     
+X     
+X     # do rotations ------------------------------
+X     
+X     my $cosa1 = 1.0;
+X     my $sina1 = 0.0;
+X
+X     $cosa1 = $pa2[3][0] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) != 0.0);
+X     $sina1 = $pa2[3][1] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][1])**2.0 ) != 0.0);
+X     
+X     for ( my $xa = 1; $xa < 4; $xa++ )
+X     {
+X      my $xs = $pa2[$xa][0];
+X      my $ys = $pa2[$xa][1];
+X      
+X      $pa2[$xa][0] = $xs*$cosa1 + $ys*$sina1;
+X      $pa2[$xa][1] = $ys*$cosa1 - $xs*$sina1;
+X     }
+X     
+X     for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X     {
+X      my $xs = $xyz[$xa][0];
+X      my $ys = $xyz[$xa][1];
+X      
+X      $xyz[$xa][0] = $xs*$cosa1 + $ys*$sina1;
+X      $xyz[$xa][1] = $ys*$cosa1 - $xs*$sina1;
+X     }
+X     
+X     my $cosa2 = 1.0;
+X     my $sina2 = 0.0;
+X     
+X     $cosa2 = $pa2[3][0] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) != 0.0);
+X     $sina2 = $pa2[3][2] / sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) if ( sqrt( ($pa2[3][0])**2.0 + ($pa2[3][2])**2.0 ) != 0.0);
+X     
+X     for ( my $xa = 1; $xa < 4; $xa++ )
+X     {
+X      my $xs = $pa2[$xa][0];
+X      my $zs = $pa2[$xa][2];
+X      
+X      $pa2[$xa][0] = $xs*$cosa2 + $zs*$sina2;
+X      $pa2[$xa][2] = $zs*$cosa2 - $xs*$sina2;
+X     }
+X     
+X     for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X     {
+X      my $xs = $xyz[$xa][0];
+X      my $zs = $xyz[$xa][2];
+X      
+X      $xyz[$xa][0] = $xs*$cosa2 + $zs*$sina2;
+X      $xyz[$xa][2] = $zs*$cosa2 - $xs*$sina2;
+X     }
+X     
+X     my $cosa3 = 1.0;
+X     my $sina3 = 0.0;
+X     
+X     $cosa3 = $pa2[2][1] / sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) if ( sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) != 0.0);
+X     $sina3 = $pa2[2][2] / sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) if ( sqrt( ($pa2[2][1])**2.0 + ($pa2[2][2])**2.0 ) != 0.0);
+X     
+X     for ( my $xa = 1; $xa < 4; $xa++ )
+X     {
+X      my $ys = $pa2[$xa][1];
+X      my $zs = $pa2[$xa][2];
+X      
+X      $pa2[$xa][1] = $ys*$cosa3 + $zs*$sina3;
+X      $pa2[$xa][2] = $zs*$cosa3 - $ys*$sina3;
+X     }
+X     
+X     for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X     {
+X      my $ys = $xyz[$xa][1];
+X      my $zs = $xyz[$xa][2];
+X      
+X      $xyz[$xa][1] = $ys*$cosa3 + $zs*$sina3;
+X      $xyz[$xa][2] = $zs*$cosa3 - $ys*$sina3;
+X     }
+X     
+X     @modeller_pdb = ();
+X     
+X     for ( my $xa = 0; $xa < $nxyz; $xa++ )
+X     {
+X      push(@modeller_pdb, sprintf("%26s%12.3f%8.3f%8.3f", $xyz[$xa][4], $xyz[$xa][0], $xyz[$xa][1], $xyz[$xa][2] ));
+X     }
+X    }
+X    
+X    my @temp_output = ();
+X    
+X    push(@temp_output, "MODEL ".( $current_task + 1 )."\n");
+X    
+X    push(@temp_output, sprintf("REMARK TEMPLATE %s\n", $tt14));
+X    
+X    foreach my $w_modeller_pdb (@modeller_pdb)
+X    {
+X     substr($w_modeller_pdb, 21, 1) = 'A';
+X     
+X     push(@temp_output, substr($w_modeller_pdb, 0, 54)."\n");
+X    }
+X    
+X    push(@temp_output, "ENDMDL\n");
+X    
+X    write_file("$temp_dir_1/$temp_file_1-$current_task", @temp_output);
+X   }
+X  }
+X }
+X 
+X my @output_models = ();
+X 
+X my $output_number = 0;
+X 
+X for ( my $xa = 0; $xa < $alignment_number; $xa++ )
+X {
+X  if ( -e "$temp_dir_1/$temp_file_1-$xa" )
+X  {
+X   my @model_pdb = read_file("$temp_dir_1/$temp_file_1-$xa"); chomp(@model_pdb);
+X   
+X   unlink("$temp_dir_1/$temp_file_1-$xa");
+X   
+X   foreach my $w_model_pdb (@model_pdb)
+X   {
+X    push(@output_models, "$w_model_pdb\n");
+X   }
+X   
+X   $output_number++;
+X  }
+X }
+X 
+X print "done\n\n";
+X 
+X if ( $output_number )
+X {
+X  print "Writing output to $output_name ... ";
+X  
+X  write_file($output_name, @output_models);
+X  
+X  print "done\n\n";
+X }
+X else
+X {
+X  print "No models have been constructed";
+X }
+X 
+X my $bench_end = Benchmark->new;
+X 
+X printf("------------------------------------------------------------\n");
+X printf("Walltime: %s\n", timestr(timediff($bench_end, $bench_start)));
+X printf("------------------------------------------------------------\n");
+X 
+X exit(0);
+END-of-ethread_model_parallel
+exit
+

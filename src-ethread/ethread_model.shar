@@ -9,7 +9,7 @@
 #
 echo x - ethread_model
 sed 's/^X//' >ethread_model << 'END-of-ethread_model'
-X#!/home/michal/local/bin/perl -w
+X#!/usr/bin/perl -w
 X
 X#===============================================================================
 X#           _______ __                        __ 
